@@ -7,7 +7,7 @@ This repository currently includes a script that preprocesses ModelNet10 or Mode
 
 ## What the script does
 
-The script build_modelnet10_perms_cache.py
+The script create_data.py
 
 1. Loads ModelNet10 or ModelNet40 using PyTorch Geometric
 2. Samples a fixed number of points from each mesh
@@ -43,7 +43,7 @@ Optionally, each sample also stores
 
 ## Main script
 
-build_modelnet10_perms_cache.py
+create_data.py
 
 ## Installation
 
@@ -66,15 +66,11 @@ Main dependencies
 
 Build a cache for ModelNet10 with 1024 sampled points and Hilbert parameter 12
 
-python build_modelnet10_perms_cache.py --P 1024 --dataset_name 10 --hilbert_m 12
+python create_data.py --P 1024 --dataset_name 10 --hilbert_m 12
 
 Build a cache for ModelNet40
 
-python build_modelnet10_perms_cache.py --P 1024 --dataset_name 40 --hilbert_m 12
-
-Specify a custom datasets root
-
-python build_modelnet10_perms_cache.py --datasets_root data/datasets --dataset_name 10
+python create_data.py --P 1024 --dataset_name 40 --hilbert_m 12
 
 ## Arguments
 
@@ -86,12 +82,6 @@ python build_modelnet10_perms_cache.py --datasets_root data/datasets --dataset_n
 
 - --hilbert_m  
   Number of bits per coordinate for Hilbert quantization
-
-- --force_reload  
-  Force reprocessing of the dataset
-
-- --datasets_root  
-  Base directory where ModelNet data is stored
 
 ## Output files
 
