@@ -1,0 +1,10 @@
+P: 1024
+num_classes: 40
+perm_mode: hilbert
+lr: 0.001
+weight_decay: 1.0e-07
+adam_eps: 0.001
+dropout: 0.2
+use_tanh: false
+scale_aug: false
+scheduler_patience: 20

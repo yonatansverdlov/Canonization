@@ -1,0 +1,15 @@
+P: 1024
+num_classes: 40
+perm_mode: hilbert
+phi_hidden:
+- 64
+- 64
+phi_dim: 16
+head_hidden:
+- 256
+- 128
+dropout: 0.2
+use_tanh: true
+lr: 0.001
+weight_decay: 1.0e-07
+scheduler_patience: 20

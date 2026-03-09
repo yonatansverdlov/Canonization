@@ -1,0 +1,11 @@
+P: 5000
+perm_type: hilbert
+lr: 0.001
+weight_decay: 1.0e-07
+adam_eps: 0.001
+max_epochs: 1000
+use_tanh: true
+dropout: 0.5
+subtract_max: true
+add_global_max_pool: true
+num_classes: 40
