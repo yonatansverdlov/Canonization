@@ -1,6 +1,5 @@
 name: canonization
 channels:
-  - pytorch
   - conda-forge
   - defaults
 
@@ -11,8 +10,10 @@ dependencies:
   - scipy
   - matplotlib
   - tqdm
-  - pytorch
-  - torchvision
+
   - pip:
+      - torch
+      - torchvision
+      - torchaudio
       - torch-geometric
       - hilbertcurve
