@@ -33,7 +33,7 @@ Here:
 Then run the distance computation:
 
     cd ../compute_distances
-    python compute_distances.py
+    python compute_distances.py --dataset_name 10 --P 256
 
 The script compares:
 
