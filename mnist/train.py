@@ -4,9 +4,9 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
-from data_funcs import obtain, get_dataset
+from utils.data_funcs import obtain, get_dataset
 from torch.utils.data import DataLoader
-from models import AverageCNN, CNp4CNN, CNN
+from utils.models import AverageCNN, CNp4CNN, CNN
 from argparse import ArgumentParser
 
 def get_hyperparams():
@@ -18,6 +18,12 @@ def get_hyperparams():
         default="average",
         choices=["average", "learned_can","cnn"],
         help="which model to run",
+    )
+    parser.add_argument(
+        "--num_seeds",
+        type=int,
+        default=1,
+        help="How many seeds to run",
     )
     args = parser.parse_args()
     return args
@@ -171,11 +177,11 @@ if __name__ == "__main__":
     val_dataset = get_dataset(data_path, split="valid")
     test_dataset = get_dataset(data_path, split="test")
 
-    seeds = [0]  # you can change this to run fewer seeds for a quick test
 
     # choose one:
     parser = get_hyperparams()
     MODEL_TYPE = parser.model_type
+    seeds = list(range(parser.num_seeds))  # you can change this to run fewer seeds for a quick test
     results = []
 
     for seed in seeds:
