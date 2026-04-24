@@ -1,4 +1,4 @@
-# Experiments
+# Canonization Experiments
 
 This repository contains two sets of experiments:
 
@@ -11,6 +11,20 @@ The ModelNet experiments are divided into two parts:
 
 1. Covering number experiments
 2. Training experiments
+
+### Environment setup
+
+Create the conda environment:
+
+    conda env create -f environment.yml
+
+Activate it:
+
+    conda activate canonization
+
+Alternatively, install the requirements manually:
+
+    pip install -r requirements.txt
 
 ### Covering Number Experiments
 
