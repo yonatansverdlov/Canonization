@@ -170,7 +170,7 @@ def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size
 
 
 if __name__ == "__main__":
-    data_path = "/home/yonatans/canonization/mnist/data/rotated_mnist"
+    data_path = "data/rotated_mnist"
     obtain(data_path)
 
     train_dataset = get_dataset(data_path, split="train")
