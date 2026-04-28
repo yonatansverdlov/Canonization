@@ -82,25 +82,24 @@ Download the data from Kaggle:
 
 Put the extracted data here:
 
-```text
 ModelNet/training/data/modelnet40_ply_hdf5_2048/
 
-To create ModelNet10 from ModelNet40,run:
+To create ModelNet10 from ModelNet40, run:
 
-cd ModelNet/training
-python create_h5_modelnet10_from_modelnet40.py
+    cd ModelNet/training
+    python create_h5_modelnet10_from_modelnet40.py
 
-Train ModelNet10:
+In order to train ModelNet10:
 
-python train.py --dataset modelnet10 --ordering hilbert --run_5_seeds true
-python train.py --dataset modelnet10 --ordering lex --run_5_seeds true
-python train.py --dataset modelnet10 --ordering ply --run_5_seeds true
+    python train.py --dataset modelnet10 --ordering hilbert --run_5_seeds true
+    python train.py --dataset modelnet10 --ordering lex --run_5_seeds true
+    python train.py --dataset modelnet10 --ordering ply --run_5_seeds true
 
-Train ModelNet40:
+In order to train ModelNet40:
 
-python train.py --dataset modelnet40 --ordering hilbert --run_5_seeds true
-python train.py --dataset modelnet40 --ordering lex --run_5_seeds true
-python train.py --dataset modelnet40 --ordering ply --run_5_seeds true
+    python train.py --dataset modelnet40 --ordering hilbert --run_5_seeds true
+    python train.py --dataset modelnet40 --ordering lex --run_5_seeds true
+    python train.py --dataset modelnet40 --ordering ply --run_5_seeds true
 
 The training script reports train/test accuracy for each seed and then mean/std over all seeds.
 ### rotatedMNIST
