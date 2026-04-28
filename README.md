@@ -82,7 +82,7 @@ Download the data from Kaggle:
 
 Put the extracted data here:
 
-ModelNet/training/data/modelnet40_ply_hdf5_2048/
+    ModelNet/training/data/modelnet40_ply_hdf5_2048/
 
 To create ModelNet10 from ModelNet40, run:
 
