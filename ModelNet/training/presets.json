@@ -1,0 +1,26 @@
+{
+    "ply": {
+        "dropout": 0.1,
+        "exp_name": "mlp_no_aug_ply",
+        "fourier_scale": 1.0,
+        "label_smoothing": 0.1,
+        "lr": 0.0014988353560536768,
+        "weight_decay": 0.05
+    },
+    "lex": {
+        "dropout": 0.1,
+        "exp_name": "mlp_no_aug_lex",
+        "fourier_scale": 0.1,
+        "label_smoothing": 0.2,
+        "lr": 0.0006407203395820919,
+        "weight_decay": 0.05
+    },
+    "hilbert": {
+        "dropout": 0.3,
+        "exp_name": "mlp_no_aug_hilbert",
+        "fourier_scale": 0.1,
+        "label_smoothing": 0.2,
+        "lr": 0.0009614328324244756,
+        "weight_decay": 0.01
+    }
+}

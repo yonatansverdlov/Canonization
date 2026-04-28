@@ -2,386 +2,852 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import print_function
+
 import os
 import sys
+import json
+import shutil
 import argparse
-from tqdm import tqdm
+import copy
+from typing import Dict, Any
+
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
-import numpy as np
-import sklearn.metrics as metrics
 
-from data import OrderedModelNet40
-from models import GlobalMLPClassifier, PointTransformerClassifier
-from util import IOStream
-import wandb
+try:
+    import lightning as L
+    from lightning.pytorch.callbacks import Callback
+except ImportError:
+    import pytorch_lightning as L
+    from pytorch_lightning.callbacks import Callback
+
+from torchmetrics.classification import MulticlassAccuracy
+
+from utils.data import OrderedModelNet40
+from utils.models import GlobalMLPClassifier, PointTransformerClassifier
+from utils.util import IOStream
 
 
-# --- NEW: Bulletproof Boolean Parser for WandB Sweeps ---
 def str2bool(v):
     if isinstance(v, bool):
         return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+    if v.lower() in ("yes", "true", "t", "y", "1"):
         return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+    if v.lower() in ("no", "false", "f", "n", "0"):
         return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+    raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
+def get_dataset_config(dataset: str) -> Dict[str, Any]:
+    if dataset == "modelnet40":
+        return {
+            "dataset_name": "modelnet40_ply_hdf5_2048",
+            "num_classes": 40,
+        }
+
+    if dataset == "modelnet10":
+        return {
+            "dataset_name": "modelnet10_ply_hdf5_2048",
+            "num_classes": 10,
+        }
+
+    raise ValueError(f"Unknown dataset: {dataset}")
+
+
+def cli_overrides(argv):
+    """
+    Return argument names explicitly passed by the user.
+
+    Examples:
+        --lr 0.1        -> "lr"
+        --lr=0.1        -> "lr"
+        --run_5_seeds   -> "run_5_seeds"
+
+    Priority will be:
+        command line > ordering config > parser defaults
+    """
+    overrides = set()
+
+    for token in argv:
+        if not token.startswith("--"):
+            continue
+
+        name = token[2:].split("=")[0]
+        name = name.replace("-", "_")
+        overrides.add(name)
+
+    return overrides
+
+
+def apply_ordering_config(args, explicit_args):
+    """
+    Load args.config and apply the hyperparameters matching args.ordering.
+
+    Example:
+        --ordering hilbert
+    loads:
+        config["hilbert"]
+
+    Priority:
+        command line > ordering config > parser defaults
+
+    Note:
+        We intentionally do not use --preset.
+        The ordering itself selects the config.
+    """
+    if args.ordering not in ["ply", "lex", "hilbert"]:
+        return args
+
+    if not os.path.exists(args.config):
+        raise FileNotFoundError(f"Could not find config file: {args.config}")
+
+    with open(args.config, "r") as f:
+        config = json.load(f)
+
+    if args.ordering not in config:
+        raise ValueError(
+            f"Ordering '{args.ordering}' not found in {args.config}. "
+            f"Available configs: {list(config.keys())}"
+        )
+
+    ordering_values = config[args.ordering]
+
+    for key, value in ordering_values.items():
+        if key in explicit_args:
+            continue
+
+        if key == "ordering":
+            raise ValueError(
+                "Do not put 'ordering' inside the config. "
+                "The config block is already selected by --ordering."
+            )
+
+        if not hasattr(args, key):
+            raise ValueError(
+                f"Config key '{key}' is not a valid parser argument."
+            )
+
+        setattr(args, key, value)
+
+    return args
 
 
 def _init_(args):
-    if not os.path.exists('checkpoints'):
-        os.makedirs('checkpoints')
-    if not os.path.exists('checkpoints/' + args.exp_name):
-        os.makedirs('checkpoints/' + args.exp_name)
-    if not os.path.exists('checkpoints/' + args.exp_name + '/models'):
-        os.makedirs('checkpoints/' + args.exp_name + '/models')
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs(os.path.join("checkpoints", args.exp_name), exist_ok=True)
+    os.makedirs(os.path.join("checkpoints", args.exp_name, "models"), exist_ok=True)
 
-    os.system('cp train.py checkpoints/' + args.exp_name + '/train.py.backup')
-    os.system('cp models.py checkpoints/' + args.exp_name + '/models.py.backup')
-    os.system('cp data.py checkpoints/' + args.exp_name + '/data.py.backup')
-    os.system('cp util.py checkpoints/' + args.exp_name + '/util.py.backup')
+    for filename in ["train.py", "models.py", "data.py", "util.py"]:
+        if os.path.exists(filename):
+            shutil.copy(
+                filename,
+                os.path.join("checkpoints", args.exp_name, f"{filename}.backup"),
+            )
 
 
-def train(args, io):
-    # --- Updated Train DataLoader ---
-    train_loader = DataLoader(
-        OrderedModelNet40(
-            partition='train',
-            num_points=args.num_points,
-            ordering=args.ordering,
-            dataset_stride=args.dataset_stride,
-            use_fps=args.use_fps,
-            apply_jitter=args.apply_jitter,
-            apply_anisotropic_scale=args.apply_scale,
-            apply_random_permutation=args.apply_random_permutation,
-            apply_rotation=args.apply_rotation  # <-- NEW
-        ),
-        num_workers=8, batch_size=args.batch_size, shuffle=True, drop_last=True)
+class ModelNetDataModule(L.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        cfg = get_dataset_config(args.dataset)
+        self.dataset_name = cfg["dataset_name"]
 
-    # --- Updated Test DataLoader ---
-    test_loader = DataLoader(
-        OrderedModelNet40(
-            partition='test',
-            num_points=args.num_points,
-            ordering=args.ordering,
-            dataset_stride=1,
-            use_fps=args.use_fps,
-            apply_jitter=False,  # Enforce safety
-            apply_anisotropic_scale=False,  # Enforce safety
-            apply_random_permutation=False,  # Enforce safety
-            apply_rotation=False  # <-- NEW (Enforce safety)
-        ),
-        num_workers=8, batch_size=args.test_batch_size, shuffle=False, drop_last=False)
+    def train_dataloader(self):
+        return DataLoader(
+            OrderedModelNet40(
+                partition="train",
+                num_points=self.args.num_points,
+                ordering=self.args.ordering,
+                dataset_name=self.dataset_name,
+                dataset_stride=self.args.dataset_stride,
+                use_fps=self.args.use_fps,
+                apply_jitter=self.args.apply_jitter,
+                apply_anisotropic_scale=self.args.apply_scale,
+                apply_random_permutation=self.args.apply_random_permutation,
+                apply_rotation=self.args.apply_rotation,
+            ),
+            batch_size=self.args.batch_size,
+            shuffle=True,
+            drop_last=True,
+            num_workers=self.args.num_workers,
+            pin_memory=self.args.pin_memory,
+            persistent_workers=self.args.num_workers > 0,
+        )
+
+    def val_dataloader(self):
+        return DataLoader(
+            OrderedModelNet40(
+                partition="test",
+                num_points=self.args.num_points,
+                ordering=self.args.ordering,
+                dataset_name=self.dataset_name,
+                dataset_stride=1,
+                use_fps=self.args.use_fps,
+                apply_jitter=False,
+                apply_anisotropic_scale=False,
+                apply_random_permutation=False,
+                apply_rotation=False,
+            ),
+            batch_size=self.args.test_batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=self.args.num_workers,
+            pin_memory=self.args.pin_memory,
+            persistent_workers=self.args.num_workers > 0,
+        )
+
+    def test_dataloader(self):
+        return self.val_dataloader()
+
+
+class LitModelNetClassifier(L.LightningModule):
+    def __init__(self, args):
+        super().__init__()
+        self.save_hyperparameters(vars(args))
+        self.args = args
+
+        cfg = get_dataset_config(args.dataset)
+        self.num_classes = cfg["num_classes"]
+
+        if args.model == "global_mlp":
+            self.model = GlobalMLPClassifier(
+                num_classes=self.num_classes,
+                num_points=args.num_points,
+                num_bands=args.num_bands,
+                fourier_scale=args.fourier_scale,
+                dropout=args.dropout,
+                ordering_type=args.ordering,
+            )
+        elif args.model == "point_transformer":
+            self.model = PointTransformerClassifier(
+                num_classes=self.num_classes,
+                dim=args.trans_dim,
+                depth=args.trans_depth,
+                heads=args.trans_heads,
+                drop_rate=args.dropout,
+                drop_path_rate=args.drop_path_rate,
+            )
+        else:
+            raise ValueError(f"Model {args.model} not implemented")
+
+        self.criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+
+        self.train_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="micro",
+        )
+        self.train_avg_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="macro",
+        )
+        self.val_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="micro",
+        )
+        self.val_avg_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="macro",
+        )
+        self.test_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="micro",
+        )
+        self.test_avg_acc = MulticlassAccuracy(
+            num_classes=self.num_classes,
+            average="macro",
+        )
+
+    def forward(self, x):
+        return self.model(x)
+
+    def configure_optimizers(self):
+        opt_choice = "sgd" if self.args.use_sgd else self.args.optimizer.lower()
+
+        if opt_choice == "sgd":
+            start_lr = self.args.lr * 100
+            optimizer = optim.SGD(
+                self.parameters(),
+                lr=start_lr,
+                momentum=self.args.momentum,
+                weight_decay=self.args.weight_decay,
+            )
+        elif opt_choice == "adamw":
+            start_lr = self.args.lr
+            optimizer = optim.AdamW(
+                self.parameters(),
+                lr=start_lr,
+                weight_decay=self.args.weight_decay,
+            )
+        else:
+            start_lr = self.args.lr
+            optimizer = optim.Adam(
+                self.parameters(),
+                lr=start_lr,
+                weight_decay=self.args.weight_decay,
+            )
+
+        min_lr = start_lr * 0.001
+        scheduler = CosineAnnealingLR(
+            optimizer,
+            T_max=self.args.epochs,
+            eta_min=min_lr,
+        )
+
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "interval": "epoch",
+                "frequency": 1,
+            },
+        }
+
+    def _check_labels(self, label, logits):
+        if label.min() < 0 or label.max() >= self.num_classes:
+            raise ValueError(
+                f"Bad labels for CrossEntropyLoss: "
+                f"label min={label.min().item()}, "
+                f"label max={label.max().item()}, "
+                f"num_classes={self.num_classes}, "
+                f"logits shape={tuple(logits.shape)}, "
+                f"dataset={self.args.dataset}"
+            )
+
+    def training_step(self, batch, batch_idx):
+        data, label = batch
+        label = label.squeeze().long()
+
+        logits = self(data)
+        self._check_labels(label, logits)
+
+        loss = self.criterion(logits, label)
+
+        if torch.isnan(loss):
+            raise RuntimeError(
+                f"FATAL ERROR: NaN loss detected at epoch {self.current_epoch}"
+            )
+
+        preds = logits.argmax(dim=1)
+
+        self.train_acc.update(preds, label)
+        self.train_avg_acc.update(preds, label)
+
+        self.log(
+            "train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+            batch_size=data.size(0),
+        )
+
+        return loss
+
+    def on_train_epoch_end(self):
+        train_acc = self.train_acc.compute()
+        train_avg_acc = self.train_avg_acc.compute()
+
+        self.log("train_acc", train_acc, prog_bar=True, sync_dist=True)
+        self.log("train_avg_acc", train_avg_acc, prog_bar=False, sync_dist=True)
+
+        self.train_acc.reset()
+        self.train_avg_acc.reset()
+
+    def validation_step(self, batch, batch_idx):
+        data, label = batch
+        label = label.squeeze().long()
+
+        logits = self(data)
+        self._check_labels(label, logits)
+
+        loss = self.criterion(logits, label)
+        preds = logits.argmax(dim=1)
+
+        self.val_acc.update(preds, label)
+        self.val_avg_acc.update(preds, label)
+
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+            batch_size=data.size(0),
+        )
+
+        return loss
+
+    def on_validation_epoch_end(self):
+        val_acc = self.val_acc.compute()
+        val_avg_acc = self.val_avg_acc.compute()
+
+        self.log("val_acc", val_acc, prog_bar=True, sync_dist=True)
+        self.log("val_avg_acc", val_avg_acc, prog_bar=False, sync_dist=True)
+
+        self.val_acc.reset()
+        self.val_avg_acc.reset()
+
+    def test_step(self, batch, batch_idx):
+        data, label = batch
+        label = label.squeeze().long()
+
+        logits = self(data)
+        self._check_labels(label, logits)
+
+        preds = logits.argmax(dim=1)
+
+        self.test_acc.update(preds, label)
+        self.test_avg_acc.update(preds, label)
+
+    def on_test_epoch_end(self):
+        test_acc = self.test_acc.compute()
+        test_avg_acc = self.test_avg_acc.compute()
+
+        self.log("test_acc", test_acc, prog_bar=True, sync_dist=True)
+        self.log("test_avg_acc", test_avg_acc, prog_bar=True, sync_dist=True)
+
+        self.test_acc.reset()
+        self.test_avg_acc.reset()
+
+
+class SaveBestStateDictCallback(Callback):
+    """
+    Preserves the old behavior:
+    save checkpoints/<exp_name>/models/model.pt whenever test/val accuracy improves.
+
+    In this Lightning version, validation is the test split.
+    """
+
+    def __init__(self, args, io):
+        super().__init__()
+        self.args = args
+        self.io = io
+        self.best_acc = -1.0
+        self.out_path = os.path.join(
+            "checkpoints",
+            args.exp_name,
+            "models",
+            "model.pt",
+        )
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        metrics = trainer.callback_metrics
+
+        if "val_acc" not in metrics:
+            return
+
+        val_acc = float(metrics["val_acc"].detach().cpu())
+        val_loss = (
+            float(metrics["val_loss"].detach().cpu())
+            if "val_loss" in metrics
+            else -1.0
+        )
+        val_avg_acc = (
+            float(metrics["val_avg_acc"].detach().cpu())
+            if "val_avg_acc" in metrics
+            else -1.0
+        )
+
+        epoch = trainer.current_epoch
+
+        self.io.cprint(
+            "Test %d, loss: %.6f, test acc: %.6f, test avg acc: %.6f"
+            % (epoch, val_loss, val_acc, val_avg_acc)
+        )
+
+        if val_acc >= self.best_acc:
+            self.best_acc = val_acc
+            torch.save(pl_module.model.state_dict(), self.out_path)
+
+
+class TrainLogCallback(Callback):
+    def __init__(self, io):
+        super().__init__()
+        self.io = io
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        metrics = trainer.callback_metrics
+        epoch = trainer.current_epoch
+
+        if "train_loss" not in metrics:
+            return
+
+        train_loss = float(metrics["train_loss"].detach().cpu())
+        train_acc = (
+            float(metrics["train_acc"].detach().cpu())
+            if "train_acc" in metrics
+            else -1.0
+        )
+        train_avg_acc = (
+            float(metrics["train_avg_acc"].detach().cpu())
+            if "train_avg_acc" in metrics
+            else -1.0
+        )
+
+        self.io.cprint(
+            "Train %d, loss: %.6f, train acc: %.6f, train avg acc: %.6f"
+            % (epoch, train_loss, train_acc, train_avg_acc)
+        )
+
+
+def load_state_dict_robust(model: nn.Module, path: str, map_location):
+    state = torch.load(path, map_location=map_location)
+
+    if isinstance(state, dict) and "state_dict" in state:
+        state = state["state_dict"]
+
+    cleaned = {}
+    for k, v in state.items():
+        if k.startswith("module."):
+            k = k[len("module."):]
+        if k.startswith("model."):
+            k = k[len("model."):]
+        cleaned[k] = v
+
+    model.load_state_dict(cleaned, strict=True)
+
+
+def run_train(args, io):
+    datamodule = ModelNetDataModule(args)
+    lit_model = LitModelNetClassifier(args)
+
+    accelerator = "gpu" if args.cuda else "cpu"
+    devices = args.devices if args.cuda else 1
+
+    trainer = L.Trainer(
+        max_epochs=args.epochs,
+        accelerator=accelerator,
+        devices=devices,
+        deterministic=False,
+        callbacks=[
+            TrainLogCallback(io),
+            SaveBestStateDictCallback(args, io),
+        ],
+        enable_checkpointing=False,
+        logger=False,
+        enable_progress_bar=True,
+        num_sanity_val_steps=0,
+    )
+
+    trainer.fit(lit_model, datamodule=datamodule)
+
+    metrics = trainer.callback_metrics
+
+    train_acc = (
+        float(metrics["train_acc"].detach().cpu())
+        if "train_acc" in metrics
+        else float("nan")
+    )
+    test_acc = (
+        float(metrics["val_acc"].detach().cpu())
+        if "val_acc" in metrics
+        else float("nan")
+    )
+    train_avg_acc = (
+        float(metrics["train_avg_acc"].detach().cpu())
+        if "train_avg_acc" in metrics
+        else float("nan")
+    )
+    test_avg_acc = (
+        float(metrics["val_avg_acc"].detach().cpu())
+        if "val_avg_acc" in metrics
+        else float("nan")
+    )
+
+    io.cprint(
+        "Final result :: seed: %d, train acc: %.6f, test acc: %.6f, "
+        "train avg acc: %.6f, test avg acc: %.6f"
+        % (args.seed, train_acc, test_acc, train_avg_acc, test_avg_acc)
+    )
+
+    return {
+        "seed": args.seed,
+        "train_acc": train_acc,
+        "test_acc": test_acc,
+        "train_avg_acc": train_avg_acc,
+        "test_avg_acc": test_avg_acc,
+    }
+
+
+def run_train_multiple_seeds(args, io):
+    seeds = args.seeds
+    all_results = []
+
+    base_exp_name = args.exp_name
+
+    io.cprint("")
+    io.cprint("========== STARTING MULTI-SEED RUN ==========")
+    io.cprint(f"Seeds: {seeds}")
+    io.cprint("============================================")
+    io.cprint("")
+
+    for seed in seeds:
+        run_args = copy.deepcopy(args)
+        run_args.seed = int(seed)
+        run_args.exp_name = f"{base_exp_name}_seed{seed}"
+
+        _init_(run_args)
+
+        seed_io = IOStream(os.path.join("checkpoints", run_args.exp_name, "run.log"))
+        seed_io.cprint(str(run_args))
+
+        L.seed_everything(run_args.seed, workers=True)
+
+        if run_args.cuda:
+            seed_io.cprint(f"Using GPU with devices={run_args.devices}")
+        else:
+            seed_io.cprint("Using CPU")
+
+        cfg = get_dataset_config(run_args.dataset)
+        seed_io.cprint(f"Dataset: {run_args.dataset}")
+        seed_io.cprint(f"Dataset folder: {cfg['dataset_name']}")
+        seed_io.cprint(f"Num classes: {cfg['num_classes']}")
+        seed_io.cprint(f"Ordering: {run_args.ordering}")
+        seed_io.cprint(f"Config: {run_args.config}")
+        seed_io.cprint(f"Starting seed {seed}")
+
+        result = run_train(run_args, seed_io)
+        all_results.append(result)
+
+        io.cprint(
+            "Seed %d done :: train acc: %.6f, test acc: %.6f, "
+            "train avg acc: %.6f, test avg acc: %.6f"
+            % (
+                seed,
+                result["train_acc"],
+                result["test_acc"],
+                result["train_avg_acc"],
+                result["test_avg_acc"],
+            )
+        )
+
+    train_accs = np.array([r["train_acc"] for r in all_results], dtype=np.float64)
+    test_accs = np.array([r["test_acc"] for r in all_results], dtype=np.float64)
+    train_avg_accs = np.array([r["train_avg_acc"] for r in all_results], dtype=np.float64)
+    test_avg_accs = np.array([r["test_avg_acc"] for r in all_results], dtype=np.float64)
+
+    ddof = 1 if len(all_results) > 1 else 0
+
+    io.cprint("")
+    io.cprint("========== MULTI-SEED SUMMARY ==========")
+
+    for r in all_results:
+        io.cprint(
+            "Seed %d :: train acc: %.6f, test acc: %.6f, "
+            "train avg acc: %.6f, test avg acc: %.6f"
+            % (
+                r["seed"],
+                r["train_acc"],
+                r["test_acc"],
+                r["train_avg_acc"],
+                r["test_avg_acc"],
+            )
+        )
+
+    io.cprint("")
+    io.cprint(
+        "Train acc mean/std: %.6f ± %.6f"
+        % (float(np.mean(train_accs)), float(np.std(train_accs, ddof=ddof)))
+    )
+    io.cprint(
+        "Test acc mean/std: %.6f ± %.6f"
+        % (float(np.mean(test_accs)), float(np.std(test_accs, ddof=ddof)))
+    )
+    io.cprint(
+        "Train avg acc mean/std: %.6f ± %.6f"
+        % (
+            float(np.mean(train_avg_accs)),
+            float(np.std(train_avg_accs, ddof=ddof)),
+        )
+    )
+    io.cprint(
+        "Test avg acc mean/std: %.6f ± %.6f"
+        % (
+            float(np.mean(test_avg_accs)),
+            float(np.std(test_avg_accs, ddof=ddof)),
+        )
+    )
+
+    io.cprint("========================================")
+
+    return all_results
+
+
+def run_test(args, io):
+    datamodule = ModelNetDataModule(args)
+    lit_model = LitModelNetClassifier(args)
 
     device = torch.device("cuda" if args.cuda else "cpu")
+    load_state_dict_robust(lit_model.model, args.model_path, map_location=device)
 
-    # --- Model Instantiation ---
-    if args.model == 'global_mlp':
-        model = GlobalMLPClassifier(
-            num_classes=40,
-            num_points=args.num_points,
-            num_bands=args.num_bands,
-            fourier_scale=args.fourier_scale,
-            dropout=args.dropout,
-            ordering_type=args.ordering
-        ).to(device)
-    elif args.model == 'point_transformer':
-        model = PointTransformerClassifier(
-            num_classes=40,
-            dim=args.trans_dim,
-            depth=args.trans_depth,
-            heads=args.trans_heads,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path_rate
-        ).to(device)
-    else:
-        raise Exception(f"Model {args.model} not implemented")
+    accelerator = "gpu" if args.cuda else "cpu"
+    devices = args.devices if args.cuda else 1
 
-    model = nn.DataParallel(model)
+    trainer = L.Trainer(
+        accelerator=accelerator,
+        devices=devices,
+        logger=False,
+        enable_checkpointing=False,
+        enable_progress_bar=True,
+    )
 
-    print("Let's use", torch.cuda.device_count(), "GPUs!")
+    results = trainer.test(lit_model, datamodule=datamodule, verbose=False)
 
-    opt_choice = 'sgd' if args.use_sgd else args.optimizer.lower()
+    if results:
+        test_acc = results[0].get("test_acc", None)
+        test_avg_acc = results[0].get("test_avg_acc", None)
 
-    if opt_choice == 'sgd':
-        print("Using SGD")
-        start_lr = args.lr * 100
-        opt = optim.SGD(model.parameters(), lr=start_lr, momentum=args.momentum, weight_decay=args.weight_decay)
-    elif opt_choice == 'adamw':
-        print("Using AdamW")
-        start_lr = args.lr
-        opt = optim.AdamW(model.parameters(), lr=start_lr, weight_decay=args.weight_decay)
-    else:
-        print("Using Adam")
-        start_lr = args.lr
-        opt = optim.Adam(model.parameters(), lr=start_lr, weight_decay=args.weight_decay)
-
-    min_lr = start_lr * 0.001
-    scheduler = CosineAnnealingLR(opt, args.epochs, eta_min=min_lr)
-    criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
-
-    best_test_acc = 0
-    global_step = 0  # <--- Initialize Global Step Tracker
-
-    for epoch in range(args.epochs):
-        # --- Train ---
-        train_loss = 0.0
-        count = 0.0
-        model.train()
-        train_pred = []
-        train_true = []
-
-        train_bar = tqdm(train_loader, desc=f"Epoch {epoch} [Train]", leave=False)
-        for data, label in train_bar:
-            data, label = data.to(device), label.to(device).squeeze()
-
-            batch_size = data.size()[0]
-
-            opt.zero_grad()
-            logits = model(data)
-            loss = criterion(logits, label)
-
-            if torch.isnan(loss):
-                print(f"\nFATAL ERROR: NaN loss detected at Epoch {epoch}!")
-                wandb.run.summary["status"] = "failed_due_to_nan"
-                sys.exit(1)
-
-            loss.backward()
-            opt.step()
-
-            global_step += 1  # <--- Increment Global Step Tracker
-
-            # <--- Log Step-Level Metrics
-            wandb.log({
-                "train/step_loss": loss.item(),
-                "global_step": global_step
-            })
-
-            preds = logits.max(dim=1)[1]
-            count += batch_size
-            train_loss += loss.item() * batch_size
-            train_true.append(label.cpu().numpy())
-            train_pred.append(preds.detach().cpu().numpy())
-
-        scheduler.step()
-        train_true = np.concatenate(train_true)
-        train_pred = np.concatenate(train_pred)
-
-        train_acc = metrics.accuracy_score(train_true, train_pred)
-        train_avg_acc = metrics.balanced_accuracy_score(train_true, train_pred)
-
-        outstr = 'Train %d, loss: %.6f, train acc: %.6f, train avg acc: %.6f' % (
-            epoch, train_loss * 1.0 / count, train_acc, train_avg_acc)
-        io.cprint(outstr)
-
-        wandb.log({
-            "epoch": epoch,
-            "train/loss": train_loss * 1.0 / count,
-            "train/acc": train_acc,
-            "train/avg_acc": train_avg_acc,
-            "global_step": global_step
-        })
-
-        # --- Test ---
-        test_loss = 0.0
-        count = 0.0
-        model.eval()
-        test_pred = []
-        test_true = []
-
-        with torch.no_grad():
-            for data, label in test_loader:
-                data, label = data.to(device), label.to(device).squeeze()
-                batch_size = data.size()[0]
-
-                logits = model(data)
-                loss = criterion(logits, label)
-                preds = logits.max(dim=1)[1]
-
-                count += batch_size
-                test_loss += loss.item() * batch_size
-                test_true.append(label.cpu().numpy())
-                test_pred.append(preds.detach().cpu().numpy())
-
-        test_true = np.concatenate(test_true)
-        test_pred = np.concatenate(test_pred)
-
-        test_acc = metrics.accuracy_score(test_true, test_pred)
-        avg_per_class_acc = metrics.balanced_accuracy_score(test_true, test_pred)
-
-        outstr = 'Test %d, loss: %.6f, test acc: %.6f, test avg acc: %.6f' % (
-            epoch, test_loss * 1.0 / count, test_acc, avg_per_class_acc)
-        io.cprint(outstr)
-
-        if test_acc >= best_test_acc:
-            best_test_acc = test_acc
-            torch.save(model.state_dict(), 'checkpoints/%s/models/model.pt' % args.exp_name)
-
-        wandb.log({
-            "epoch": epoch,
-            "test/loss": test_loss * 1.0 / count,
-            "test/acc": test_acc,
-            "test/avg_acc": avg_per_class_acc,
-            "test/best_acc": best_test_acc,
-            "lr": opt.param_groups[0]['lr']
-        })
-
-
-def test(args, io):
-    # --- Updated Eval DataLoader ---
-    test_loader = DataLoader(
-        OrderedModelNet40(
-            partition='test',
-            num_points=args.num_points,
-            ordering=args.ordering,
-            dataset_stride=1,
-            use_fps=args.use_fps,
-            apply_jitter=False,
-            apply_anisotropic_scale=False,
-            apply_random_permutation=False,
-            apply_rotation=False  # <-- NEW (Enforce safety)
-        ),
-        num_workers=8, batch_size=args.test_batch_size, shuffle=False, drop_last=False)
-
-    device = torch.device("cuda" if args.cuda else "cpu")
-
-    if args.model == 'global_mlp':
-        model = GlobalMLPClassifier(
-            num_classes=40,
-            num_points=args.num_points,
-            num_bands=args.num_bands,
-            fourier_scale=args.fourier_scale,
-            dropout=args.dropout,
-            ordering_type=args.ordering
-        ).to(device)
-    elif args.model == 'point_transformer':
-        model = PointTransformerClassifier(
-            num_classes=40,
-            dim=args.trans_dim,
-            depth=args.trans_depth,
-            heads=args.trans_heads,
-            drop_rate=args.dropout,
-            drop_path_rate=args.drop_path_rate
-        ).to(device)
-    else:
-        raise Exception(f"Model {args.model} not implemented")
-
-    model = nn.DataParallel(model)
-    model.load_state_dict(torch.load(args.model_path, map_location=device))
-    model = model.eval()
-
-    test_pred = []
-    test_true = []
-
-    with torch.no_grad():
-        for data, label in test_loader:
-            data, label = data.to(device), label.to(device).squeeze()
-            logits = model(data)
-            preds = logits.max(dim=1)[1]
-            test_true.append(label.cpu().numpy())
-            test_pred.append(preds.detach().cpu().numpy())
-
-    test_true = np.concatenate(test_true)
-    test_pred = np.concatenate(test_pred)
-    test_acc = metrics.accuracy_score(test_true, test_pred)
-    avg_per_class_acc = metrics.balanced_accuracy_score(test_true, test_pred)
-
-    outstr = 'Test :: test acc: %.6f, test avg acc: %.6f' % (test_acc, avg_per_class_acc)
-    io.cprint(outstr)
+        if test_acc is not None and test_avg_acc is not None:
+            io.cprint(
+                "Test :: test acc: %.6f, test avg acc: %.6f"
+                % (test_acc, test_avg_acc)
+            )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Pre-ordered Point Cloud Recognition')
-    parser.add_argument('--exp_name', type=str, default='Best_MLP_Hilbert', metavar='N', help='Name of the experiment')
+    parser = argparse.ArgumentParser(description="Pre-ordered Point Cloud Recognition")
 
-    parser.add_argument('--ordering', type=str, default='hilbert', choices=['lex', 'hilbert', 'ply', 'pca'],
-                        help='Which canonical dataset to load')
-    parser.add_argument('--model', type=str, default='global_mlp', choices=['global_mlp', 'point_transformer'],
-                        help='Model to use')
+    parser.add_argument(
+        "--config",
+        type=str,
+        default="presets.json",
+        help="JSON config file. The block is selected by --ordering.",
+    )
 
-    # --- Data Processing & Augmentation Args (REVISED FOR WANDB) ---
-    parser.add_argument('--dataset_stride', type=int, default=1,
-                        help='Subsample the dataset by taking every Nth pointcloud')
-    parser.add_argument('--use_fps', type=str2bool, nargs='?', const=True, default=False,
-                        help='Use Farthest Point Sampling instead of stride-based downsampling')
-    parser.add_argument('--apply_jitter', type=str2bool, nargs='?', const=True, default=False,
-                        help='Apply random jitter augmentation to train data')
-    parser.add_argument('--apply_scale', type=str2bool, nargs='?', const=True, default=False,
-                        help='Apply anisotropic scaling augmentation to train data')
-    parser.add_argument('--apply_random_permutation', type=str2bool, nargs='?', const=True, default=False,
-                        help='Apply random permutation to point ordering during training')
+    parser.add_argument("--exp_name", type=str, default="Best_MLP_Hilbert")
 
-    # --- NEW: Added random rotation toggle ---
-    parser.add_argument('--apply_rotation', type=str2bool, nargs='?', const=True, default=False,
-                        help='Apply random rotation augmentation to train data')
+    parser.add_argument(
+        "--ordering",
+        type=str,
+        default="hilbert",
+        choices=["lex", "hilbert", "ply", "pca"],
+        help="Ordering mode. Also selects the matching config block when ordering is ply/lex/hilbert.",
+    )
 
-    # --- Transformer Hyperparameters ---
-    parser.add_argument('--trans_dim', type=int, default=216, help='Transformer embedding dimension')
-    parser.add_argument('--trans_depth', type=int, default=4, help='Number of Transformer layers')
-    parser.add_argument('--trans_heads', type=int, default=6, help='Number of attention heads')
-    parser.add_argument('--drop_path_rate', type=float, default=0.1, help='Stochastic depth rate')
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="global_mlp",
+        choices=["global_mlp", "point_transformer"],
+    )
 
-    # --- Global MLP Hyperparameters ---
-    parser.add_argument('--num_bands', type=int, default=3, help='Number of Fourier bands for Global MLP')
-    parser.add_argument('--fourier_scale', type=float, default=0.1,
-                        help='Scale for Random Fourier Features')
+    parser.add_argument("--dataset_stride", type=int, default=1)
+    parser.add_argument("--use_fps", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--apply_jitter", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--apply_scale", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument(
+        "--apply_random_permutation",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+    )
+    parser.add_argument("--apply_rotation", type=str2bool, nargs="?", const=True, default=False)
 
-    # --- Standard Hyperparameters ---
-    parser.add_argument('--batch_size', type=int, default=256, metavar='batch_size', help='Size of batch')
-    parser.add_argument('--test_batch_size', type=int, default=16, metavar='batch_size', help='Size of batch')
-    parser.add_argument('--epochs', type=int, default=100, metavar='N', help='number of episodes to train')
-    parser.add_argument('--optimizer', type=str, default='adamw', choices=['adam', 'adamw', 'sgd'],
-                        help='Optimizer to use')
-    parser.add_argument('--use_sgd', type=str2bool, nargs='?', const=True, default=False,
-                        help='Use SGD (Default is Adam)')
-    parser.add_argument('--lr', type=float, default=0.0009614328324244756, metavar='LR', help='learning rate')
-    parser.add_argument('--momentum', type=float, default=0.9, metavar='M', help='SGD momentum (default: 0.9)')
-    parser.add_argument('--weight_decay', type=float, default=0.01, help='Weight decay for the optimizer')
-    parser.add_argument('--label_smoothing', type=float, default=0.2,
-                        help='Label smoothing epsilon for cross entropy loss')
-    parser.add_argument('--dropout', type=float, default=0.3, help='dropout rate')
+    parser.add_argument("--trans_dim", type=int, default=216)
+    parser.add_argument("--trans_depth", type=int, default=4)
+    parser.add_argument("--trans_heads", type=int, default=6)
+    parser.add_argument("--drop_path_rate", type=float, default=0.1)
 
-    # --- System ---
-    parser.add_argument('--dataset', type=str, default='modelnet40', choices=['modelnet40'])
-    parser.add_argument('--num_points', type=int, default=1024, help='num of points to use')
-    parser.add_argument('--eval', type=str2bool, nargs='?', const=True, default=False, help='evaluate the model')
-    parser.add_argument('--no_cuda', type=str2bool, nargs='?', const=True, default=False, help='enables CUDA training')
-    parser.add_argument('--seed', type=int, default=4, metavar='S', help='random seed (default: 4)')
-    parser.add_argument('--model_path', type=str, default='', metavar='N', help='Pretrained model path')
+    # Shared defaults across ply / lex / hilbert configs:
+    parser.add_argument("--num_bands", type=int, default=3)
+    parser.add_argument("--batch_size", type=int, default=256)
+    parser.add_argument("--epochs", type=int, default=100)
+    parser.add_argument("--num_points", type=int, default=1024)
 
+    # These are loaded from presets.json according to --ordering,
+    # unless explicitly overridden in the CLI.
+    parser.add_argument("--fourier_scale", type=float, default=0.1)
+    parser.add_argument("--lr", type=float, default=0.0009614328324244756)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--label_smoothing", type=float, default=0.2)
+    parser.add_argument("--dropout", type=float, default=0.3)
+
+    parser.add_argument("--test_batch_size", type=int, default=16)
+    parser.add_argument(
+        "--optimizer",
+        type=str,
+        default="adamw",
+        choices=["adam", "adamw", "sgd"],
+    )
+    parser.add_argument("--use_sgd", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--momentum", type=float, default=0.9)
+
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="modelnet10",
+        choices=["modelnet40", "modelnet10"],
+    )
+
+    parser.add_argument("--eval", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--no_cuda", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--seed", type=int, default=4)
+    parser.add_argument("--model_path", type=str, default="")
+
+    parser.add_argument("--num_workers", type=int, default=1)
+    parser.add_argument("--pin_memory", type=str2bool, nargs="?", const=True, default=True)
+    parser.add_argument(
+        "--devices",
+        type=int,
+        default=1,
+        help="Number of GPU devices for Lightning. Use 1 unless you intentionally want multi-GPU.",
+    )
+
+    parser.add_argument(
+        "--run_5_seeds",
+        type=str2bool,
+        nargs="?",
+        const=True,
+        default=False,
+        help="Run training for 5 seeds and report mean/std.",
+    )
+
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[0, 1, 2, 3, 4],
+        help="Seeds to run when --run_5_seeds is True.",
+    )
+
+    explicit_args = cli_overrides(sys.argv[1:])
     args = parser.parse_args()
-
-    wandb.init(project="canon", name=args.exp_name, config=vars(args))
-
-    # <--- DEFINED METRICS FOR BOTH EPOCH AND STEP LOGGING --->
-    wandb.define_metric("epoch")
-    wandb.define_metric("global_step")
-    wandb.define_metric("train/step_loss", step_metric="global_step")
-    wandb.define_metric("train/loss", step_metric="epoch")
-    wandb.define_metric("train/acc", step_metric="epoch")
-    wandb.define_metric("train/avg_acc", step_metric="epoch")
-    wandb.define_metric("test/*", step_metric="epoch")
-    wandb.define_metric("lr", step_metric="epoch")
+    args = apply_ordering_config(args, explicit_args)
 
     _init_(args)
 
-    io = IOStream('checkpoints/' + args.exp_name + '/run.log')
+    io = IOStream(os.path.join("checkpoints", args.exp_name, "run.log"))
     io.cprint(str(args))
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
-    torch.manual_seed(args.seed)
+
+    L.seed_everything(args.seed, workers=True)
 
     if args.cuda:
-        io.cprint(f'Using GPU: {torch.cuda.current_device()} from {torch.cuda.device_count()} devices')
-        torch.cuda.manual_seed(args.seed)
+        io.cprint(f"Using GPU with devices={args.devices}")
     else:
-        io.cprint('Using CPU')
+        io.cprint("Using CPU")
+
+    cfg = get_dataset_config(args.dataset)
+    io.cprint(f"Dataset: {args.dataset}")
+    io.cprint(f"Dataset folder: {cfg['dataset_name']}")
+    io.cprint(f"Num classes: {cfg['num_classes']}")
+
+    if args.ordering in ["ply", "lex", "hilbert"]:
+        io.cprint(f"Loaded config by ordering: {args.ordering}")
+        io.cprint(f"Config: {args.config}")
 
     if not args.eval:
-        train(args, io)
+        if args.run_5_seeds:
+            run_train_multiple_seeds(args, io)
+        else:
+            run_train(args, io)
     else:
-        test(args, io)
+        run_test(args, io)

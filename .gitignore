@@ -25,3 +25,4 @@ results/
 *.ckpt
 *.pt
 data/
+checkpoints/

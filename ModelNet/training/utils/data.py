@@ -50,28 +50,33 @@ def farthest_point_sample(xyz, npoint):
     return centroids
 
 
-def load_ordered_data(partition, data_root="data"):
-    dataset_name = "modelnet40_ply_hdf5_2048"
+def load_ordered_data(
+    partition,
+    data_root="data",
+    dataset_name="modelnet40_ply_hdf5_2048",
+):
     dataset_dir = os.path.join(data_root, dataset_name)
+    print("LOADING DATASET DIR:", dataset_dir)
 
     if not os.path.exists(dataset_dir):
         raise FileNotFoundError(f"Could not find dataset directory at {dataset_dir}")
 
+    file_pattern = os.path.join(dataset_dir, f"ply_data_{partition}*.h5")
+    files = glob.glob(file_pattern)
+
+    if len(files) == 0:
+        raise FileNotFoundError(f"No files found matching {file_pattern}")
+
     all_data = []
     all_label = []
 
-    file_pattern = os.path.join(dataset_dir, f'ply_data_{partition}*.h5')
-    files = glob.glob(file_pattern)
+    for h5_name in sorted(files):
+        with h5py.File(h5_name, "r") as f:
+            data = f["data"][:].astype("float32")
+            label = f["label"][:].astype("int64")
 
-    if not files:
-        raise FileNotFoundError(f"No h5 files found matching: {file_pattern}")
-
-    for h5_name in files:
-        with h5py.File(h5_name, 'r') as f:
-            data = f['data'][:].astype('float32')
-            label = f['label'][:].astype('int64')
-            all_data.append(data)
-            all_label.append(label)
+        all_data.append(data)
+        all_label.append(label)
 
     all_data = np.concatenate(all_data, axis=0)
     all_label = np.concatenate(all_label, axis=0)
@@ -83,7 +88,7 @@ class OrderedModelNet40(Dataset):
     def __init__(self, num_points, partition='train', ordering='lex', data_root='data',
                  jitter_sigma=0.02, jitter_clip=0.04, dataset_stride=1, use_fps=False,
                  apply_jitter=False, apply_anisotropic_scale=False,
-                 apply_random_permutation=False, apply_rotation=False):
+                 apply_random_permutation=False, apply_rotation=False,dataset_name="modelnet40_ply_hdf5_2048"):
         """
         Dataloader for Point Clouds.
         """
@@ -100,7 +105,6 @@ class OrderedModelNet40(Dataset):
         self.jitter_clip = jitter_clip
 
         # --- FPS Pre-computation and Caching Logic ---
-        dataset_name = "modelnet40_ply_hdf5_2048"
         cache_dir = os.path.join(data_root, dataset_name, "fps_cache")
         os.makedirs(cache_dir, exist_ok=True)
 
@@ -114,7 +118,7 @@ class OrderedModelNet40(Dataset):
                 self.label = cached_data['label']
             else:
                 print(f"FPS Cache not found. Generating {num_points}-point FPS downsampling...")
-                raw_data, raw_label = load_ordered_data(partition, data_root=data_root)
+                raw_data, raw_label = load_ordered_data(partition, data_root=data_root, dataset_name=dataset_name)
                 num_samples = raw_data.shape[0]
                 fps_data = np.zeros((num_samples, num_points, 3), dtype=np.float32)
 
@@ -130,7 +134,7 @@ class OrderedModelNet40(Dataset):
                 self.label = raw_label
                 np.savez_compressed(cache_file, data=self.data, label=self.label)
         else:
-            self.data, self.label = load_ordered_data(partition, data_root=data_root)
+            self.data, self.label = load_ordered_data(partition, data_root=data_root,dataset_name=dataset_name)
 
         # Subset the dataset based on the provided dataset_stride
         if dataset_stride > 1:
