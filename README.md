@@ -27,11 +27,15 @@ Install PyTorch with CUDA 12.1:
 Install the remaining required packages:
 
     python -m pip install torch-geometric lightning kornia numpy scipy hilbertcurve h5py tqdm 
+
 Install space-filling-pytorch from source:
+
     cd /tmp
     git clone https://github.com/Kitsunetic/space-filling-pytorch.git
     cd space-filling-pytorch
     python -m pip install -e .
+    cd ~/Canonization
+
 ## Experiments
 
 ### ModelNet
