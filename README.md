@@ -36,16 +36,16 @@ Install space-filling-pytorch from source:
     python -m pip install -e .
     cd ~/Canonization
 
-## Experiments
+# Experiments
 
-### ModelNet
+## ModelNet
 
 The ModelNet experiments are divided into two parts:
 
 1. Covering number experiments
 2. Training experiments
 
-#### Covering Number Experiments
+### Covering Number Experiments
 
 First create the data.
 
@@ -80,7 +80,7 @@ The script compares:
     group distance
     sort distance
     Hilbert distance
-#### Training Experiments
+### Training Experiments
 
 The training code uses the HDF5 ModelNet40 point-cloud dataset.
 
@@ -111,7 +111,7 @@ In order to train ModelNet40:
 
 The training script reports train/test accuracy  mean/std over all seeds.
 
-#### Rotation / Frame Canonization Training
+## Rotation / Frame Canonization Training
 The models are:
 
     1  Pure PCA
