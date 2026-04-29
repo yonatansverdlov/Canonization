@@ -111,7 +111,7 @@ In order to train ModelNet40:
 
 The training script reports train/test accuracy  mean/std over all seeds.
 
-## Rotation / Frame Canonization Training
+### Rotation / Frame Canonization Training
 The models are:
 
     1  Pure PCA
@@ -137,14 +137,14 @@ Five seeds:
     python train_rot.py --model Skewness --run_5_seeds true
     python train_rot.py --model RandomFrame --run_5_seeds true
     
-### rotatedMNIST
+## rotatedMNIST
 
 The rotatedMNIST experiments contain two scripts:
 
 1. Training
 2. Distance computation
 
-#### Training
+### Training
 
 From the repository root, run:
 
@@ -165,7 +165,7 @@ To reproduce the paper setting, use five seeds:
     python train.py --model_type average --num_seeds 5
     python train.py --model_type learned_can --num_seeds 5
 
-#### Distance Computation
+### Distance Computation
 
 From the repository root, run:
 
