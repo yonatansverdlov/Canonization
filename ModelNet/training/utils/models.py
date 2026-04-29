@@ -4,7 +4,10 @@ import torch.nn.functional as F
 import math
 import itertools
 from torch_geometric.nn import MLP
-from torch_geometric.nn.aggr import DeepSetsAggregation
+from torch_geometric.nn.aggr import DeepSetsAggregation 
+from hilbertcurve.hilbertcurve import HilbertCurve
+from space_filling_pytorch import encode
+
 # ===========================================================================
 #  RoPE Utilities
 # ===========================================================================
@@ -190,14 +193,6 @@ class PointTransformerClassifier(nn.Module):
         x = self.norm(x)
         x = x.max(dim=1)[0]
         return self.head(x)
-
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import math
-from hilbertcurve.hilbertcurve import HilbertCurve
-from space_filling_pytorch import encode
 
 
 # ===========================================================================

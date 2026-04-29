@@ -1,3 +1,4 @@
+![Figure caption](hilbert.png)
 # Canonization Experiments
 
 This repository contains two sets of experiments:
