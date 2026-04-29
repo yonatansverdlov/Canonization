@@ -109,7 +109,27 @@ In order to train ModelNet40:
     python train.py --dataset modelnet40 --ordering lex --run_5_seeds true
     python train.py --dataset modelnet40 --ordering ply --run_5_seeds true
 
-The training script reports train/test accuracy for each seed and then mean/std over all seeds.
+The training script reports train/test accuracy  mean/std over all seeds.
+
+#### Rotation / Frame Canonization Training
+The models are:
+    1  Pure PCA
+    2  Frame Averaging
+    3  Skewness Canonization
+    4  Random Frame
+Run from:
+    cd ModelNet/training
+
+Single seed:
+    python train_rot.py --model PurePCA
+    python train_rot.py --model FrameAveraging
+    python train_rot.py --model Skewness
+    python train_rot.py --model RandomFrame
+Five seeds:
+    python train_rot.py --model PurePCA --run_5_seeds true
+    python train_rot.py --model FrameAveraging --run_5_seeds true
+    python train_rot.py --model Skewness --run_5_seeds true
+    python train_rot.py --model RandomFrame --run_5_seeds true
 ### rotatedMNIST
 
 The rotatedMNIST experiments contain two scripts:

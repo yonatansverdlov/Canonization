@@ -716,7 +716,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config",
         type=str,
-        default="utils/presets.json",
+        default="configs/modelnet.json",
         help="JSON config file. The block is selected by --ordering.",
     )
 

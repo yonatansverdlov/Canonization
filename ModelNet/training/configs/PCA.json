@@ -1,0 +1,26 @@
+{
+    "1": {
+        "exp_name": "PurePCA_SeedStudy_1600",
+        "lr": 0.001118604121563404,
+        "batch_size": 32,
+        "weight_decay": 0.000012114201421212455
+    },
+    "2": {
+        "exp_name": "FrameAveraging_SeedStudy_1600",
+        "lr": 0.0038344263314129216,
+        "batch_size": 64,
+        "weight_decay": 0.00044667107132415485
+    },
+    "3": {
+        "exp_name": "SkewnessCanon_SeedStudy_1600",
+        "lr": 0.002379819526548229,
+        "batch_size": 32,
+        "weight_decay": 0.00018254150092374713
+    },
+    "4": {
+        "exp_name": "RandomFrame_SeedStudy_1600",
+        "lr": 0.0004116019180557964,
+        "batch_size": 128,
+        "weight_decay": 0.0002776919628599624
+    }
+}
