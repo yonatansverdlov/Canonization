@@ -7,13 +7,15 @@ from tqdm import tqdm
 
 import torch_geometric.transforms as T
 from torch_geometric.io import read_off
-
+from pathlib import Path
 
 SEED = 0
 NUM_POINTS = 2048
 
-RAW_ROOT = "/home/yonatans/canonization/ModelNet/data_creation/data/datasets/ModelNet40/raw"
-OUT_ROOT = "/home/yonatans/canonization/ModelNet/training/data/modelnet10_ply_hdf5_2048"
+ROOT = Path(__file__).resolve().parents[1]
+
+RAW_ROOT = ROOT / "data_creation" / "data" / "datasets" / "ModelNet40" / "raw"
+OUT_ROOT = ROOT / "training" / "data" / "modelnet10_ply_hdf5_2048"
 
 
 MODELNET10_CLASSES = [
