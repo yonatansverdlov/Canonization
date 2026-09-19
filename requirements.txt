@@ -1,0 +1,12 @@
+torch
+torch-geometric
+lightning
+pytorch-lightning
+torchmetrics
+numpy
+scipy
+h5py
+tqdm
+kornia
+hilbertcurve
+git+https://github.com/Kitsunetic/space-filling-pytorch.git
