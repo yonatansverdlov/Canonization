@@ -6,7 +6,6 @@ import itertools
 from torch_geometric.nn import MLP
 from torch_geometric.nn.aggr import DeepSetsAggregation 
 from hilbertcurve.hilbertcurve import HilbertCurve
-from space_filling_pytorch import encode
 
 # ===========================================================================
 #  RoPE Utilities
@@ -346,9 +345,15 @@ class DynamicOrdering(nn.Module):
         # Since X is in [0, 1] from batched_normalize, we scale it.
         X_encoded_input = (X * 2.0) - 1.0
 
-        # 2. Get the Hilbert codes using the Triton kernel
-        # Returns shape (B, N) with giant integers
-        h_codes = encode(X_encoded_input, space_size=self.space_size, method='hilbert', convention='xyz')
+        # 2. Get the Hilbert codes using the Triton kernel.
+        # Import lazily so non-Hilbert experiments do not depend on this package.
+        from space_filling_pytorch import encode
+        h_codes = encode(
+            X_encoded_input,
+            space_size=self.space_size,
+            method='hilbert',
+            convention='xyz',
+        )
 
         # 3. Sort the codes to get the permutation indices
         perm = torch.argsort(h_codes, dim=1, stable=True)
