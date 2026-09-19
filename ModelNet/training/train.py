@@ -157,6 +157,9 @@ class ModelNetDataModule(L.LightningDataModule):
         self.dataset_name = cfg["dataset_name"]
 
     def train_dataloader(self):
+        generator = torch.Generator()
+        generator.manual_seed(self.args.seed)
+
         return DataLoader(
             OrderedModelNet40(
                 partition="train",
@@ -176,6 +179,7 @@ class ModelNetDataModule(L.LightningDataModule):
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             persistent_workers=self.args.num_workers > 0,
+            generator=generator,
         )
 
     def test_dataloader(self):
@@ -471,7 +475,7 @@ def run_train(args, io):
         max_epochs=args.epochs,
         accelerator=accelerator,
         devices=devices,
-        deterministic=False,
+        deterministic=True,
         callbacks=[TrainLogCallback(io)],
         enable_checkpointing=False,
         logger=False,
