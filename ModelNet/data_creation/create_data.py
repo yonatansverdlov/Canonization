@@ -156,11 +156,21 @@ def main():
     hilbert_m = args.hilbert_m
     force_reload = args.force_reload
 
-    pre_transform = SamplePoints(P)
-    train_ds = ModelNet(root=root, name=args.dataset_name, train=True,
-                        pre_transform=pre_transform, force_reload=force_reload)
-    test_ds  = ModelNet(root=root, name=args.dataset_name, train=False,
-                        pre_transform=pre_transform, force_reload=force_reload)
+    transform = SamplePoints(P)
+    train_ds = ModelNet(
+        root=root,
+        name=args.dataset_name,
+        train=True,
+        transform=transform,
+        force_reload=force_reload,
+    )
+    test_ds = ModelNet(
+        root=root,
+        name=args.dataset_name,
+        train=False,
+        transform=transform,
+        force_reload=force_reload,
+    )
 
     print("Building train cache...")
     train_cache = build_split_cache(train_ds, P=P, hilbert_m=hilbert_m)
