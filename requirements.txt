@@ -1,4 +1,6 @@
 torch
+torchvision
+torchaudio
 torch-geometric
 lightning
 pytorch-lightning
@@ -9,4 +11,10 @@ h5py
 tqdm
 kornia
 hilbertcurve
+wandb
+random-fourier-features-pytorch
+scikit-learn
+matplotlib
+seaborn
+pytest
 git+https://github.com/Kitsunetic/space-filling-pytorch.git
