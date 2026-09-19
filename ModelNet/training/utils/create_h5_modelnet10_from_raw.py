@@ -12,7 +12,7 @@ from pathlib import Path
 SEED = 0
 NUM_POINTS = 2048
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 RAW_ROOT = ROOT / "data_creation" / "data" / "datasets" / "ModelNet40" / "raw"
 OUT_ROOT = ROOT / "training" / "data" / "modelnet10_ply_hdf5_2048"
