@@ -178,7 +178,7 @@ class ModelNetDataModule(L.LightningDataModule):
             persistent_workers=self.args.num_workers > 0,
         )
 
-    def val_dataloader(self):
+    def test_dataloader(self):
         return DataLoader(
             OrderedModelNet40(
                 partition="test",
@@ -199,9 +199,6 @@ class ModelNetDataModule(L.LightningDataModule):
             pin_memory=self.args.pin_memory,
             persistent_workers=self.args.num_workers > 0,
         )
-
-    def test_dataloader(self):
-        return self.val_dataloader()
 
 
 class LitModelNetClassifier(L.LightningModule):
@@ -416,56 +413,6 @@ class LitModelNetClassifier(L.LightningModule):
         self.test_avg_acc.reset()
 
 
-class SaveBestStateDictCallback(Callback):
-    """
-    Preserves the old behavior:
-    save checkpoints/<exp_name>/models/model.pt whenever test/val accuracy improves.
-
-    In this Lightning version, validation is the test split.
-    """
-
-    def __init__(self, args, io):
-        super().__init__()
-        self.args = args
-        self.io = io
-        self.best_acc = -1.0
-        self.out_path = os.path.join(
-            "checkpoints",
-            args.exp_name,
-            "models",
-            "model.pt",
-        )
-
-    def on_validation_epoch_end(self, trainer, pl_module):
-        metrics = trainer.callback_metrics
-
-        if "val_acc" not in metrics:
-            return
-
-        val_acc = float(metrics["val_acc"].detach().cpu())
-        val_loss = (
-            float(metrics["val_loss"].detach().cpu())
-            if "val_loss" in metrics
-            else -1.0
-        )
-        val_avg_acc = (
-            float(metrics["val_avg_acc"].detach().cpu())
-            if "val_avg_acc" in metrics
-            else -1.0
-        )
-
-        epoch = trainer.current_epoch
-
-        self.io.cprint(
-            "Test %d, loss: %.6f, test acc: %.6f, test avg acc: %.6f"
-            % (epoch, val_loss, val_acc, val_avg_acc)
-        )
-
-        if val_acc >= self.best_acc:
-            self.best_acc = val_acc
-            torch.save(pl_module.model.state_dict(), self.out_path)
-
-
 class TrainLogCallback(Callback):
     def __init__(self, io):
         super().__init__()
@@ -525,67 +472,52 @@ def run_train(args, io):
         accelerator=accelerator,
         devices=devices,
         deterministic=False,
-        callbacks=[
-            TrainLogCallback(io),
-            SaveBestStateDictCallback(args, io),
-        ],
+        callbacks=[TrainLogCallback(io)],
         enable_checkpointing=False,
         logger=False,
         enable_progress_bar=True,
         num_sanity_val_steps=0,
+        limit_val_batches=0,
     )
 
+    # Train on the full training split. The test split is not touched
+    # during optimization and is evaluated exactly once after training.
     trainer.fit(lit_model, datamodule=datamodule)
 
     metrics = trainer.callback_metrics
-
     train_acc = (
         float(metrics["train_acc"].detach().cpu())
         if "train_acc" in metrics
         else float("nan")
     )
-    test_acc = (
-        float(metrics["val_acc"].detach().cpu())
-        if "val_acc" in metrics
-        else float("nan")
-    )
-    train_avg_acc = (
-        float(metrics["train_avg_acc"].detach().cpu())
-        if "train_avg_acc" in metrics
-        else float("nan")
-    )
-    test_avg_acc = (
-        float(metrics["val_avg_acc"].detach().cpu())
-        if "val_avg_acc" in metrics
-        else float("nan")
-    )
 
-    io.cprint(
-        "Final result :: seed: %d, train acc: %.6f, test acc: %.6f, "
-        "train avg acc: %.6f, test avg acc: %.6f"
-        % (args.seed, train_acc, test_acc, train_avg_acc, test_avg_acc)
+    final_model_path = os.path.join(
+        "checkpoints",
+        args.exp_name,
+        "models",
+        "model.pt",
     )
+    torch.save(lit_model.model.state_dict(), final_model_path)
+
+    test_results = trainer.test(
+        lit_model,
+        datamodule=datamodule,
+        verbose=False,
+    )
+    test_acc = float(test_results[0]["test_acc"])
+    gen_gap = train_acc - test_acc
 
     return {
         "seed": args.seed,
         "train_acc": train_acc,
         "test_acc": test_acc,
-        "train_avg_acc": train_avg_acc,
-        "test_avg_acc": test_avg_acc,
+        "gen_gap": gen_gap,
     }
-
 
 def run_train_multiple_seeds(args, io):
     seeds = args.seeds
     all_results = []
-
     base_exp_name = args.exp_name
-
-    io.cprint("")
-    io.cprint("========== STARTING MULTI-SEED RUN ==========")
-    io.cprint(f"Seeds: {seeds}")
-    io.cprint("============================================")
-    io.cprint("")
 
     for seed in seeds:
         run_args = copy.deepcopy(args)
@@ -594,90 +526,46 @@ def run_train_multiple_seeds(args, io):
 
         _init_(run_args)
 
-        seed_io = IOStream(os.path.join("checkpoints", run_args.exp_name, "run.log"))
-        seed_io.cprint(str(run_args))
-
+        seed_io = IOStream(
+            os.path.join("checkpoints", run_args.exp_name, "run.log")
+        )
         L.seed_everything(run_args.seed, workers=True)
-
-        if run_args.cuda:
-            seed_io.cprint(f"Using GPU with devices={run_args.devices}")
-        else:
-            seed_io.cprint("Using CPU")
-
-        cfg = get_dataset_config(run_args.dataset)
-        seed_io.cprint(f"Dataset: {run_args.dataset}")
-        seed_io.cprint(f"Dataset folder: {cfg['dataset_name']}")
-        seed_io.cprint(f"Num classes: {cfg['num_classes']}")
-        seed_io.cprint(f"Ordering: {run_args.ordering}")
-        seed_io.cprint(f"Config: {run_args.config}")
-        seed_io.cprint(f"Starting seed {seed}")
 
         result = run_train(run_args, seed_io)
         all_results.append(result)
 
-        io.cprint(
-            "Seed %d done :: train acc: %.6f, test acc: %.6f, "
-            "train avg acc: %.6f, test avg acc: %.6f"
-            % (
-                seed,
-                result["train_acc"],
-                result["test_acc"],
-                result["train_avg_acc"],
-                result["test_avg_acc"],
-            )
-        )
-
-    train_accs = np.array([r["train_acc"] for r in all_results], dtype=np.float64)
-    test_accs = np.array([r["test_acc"] for r in all_results], dtype=np.float64)
-    train_avg_accs = np.array([r["train_avg_acc"] for r in all_results], dtype=np.float64)
-    test_avg_accs = np.array([r["test_avg_acc"] for r in all_results], dtype=np.float64)
+    test_accs = np.array(
+        [r["test_acc"] for r in all_results],
+        dtype=np.float64,
+    )
+    gen_gaps = np.array(
+        [r["gen_gap"] for r in all_results],
+        dtype=np.float64,
+    )
 
     ddof = 1 if len(all_results) > 1 else 0
 
-    io.cprint("")
-    io.cprint("========== MULTI-SEED SUMMARY ==========")
-
-    for r in all_results:
-        io.cprint(
-            "Seed %d :: train acc: %.6f, test acc: %.6f, "
-            "train avg acc: %.6f, test avg acc: %.6f"
-            % (
-                r["seed"],
-                r["train_acc"],
-                r["test_acc"],
-                r["train_avg_acc"],
-                r["test_avg_acc"],
-            )
-        )
+    test_mean = float(np.mean(test_accs))
+    test_std = float(np.std(test_accs, ddof=ddof))
+    gap_mean = float(np.mean(gen_gaps))
+    gap_std = float(np.std(gen_gaps, ddof=ddof))
 
     io.cprint("")
+    io.cprint("========== FINAL SUMMARY ==========")
     io.cprint(
-        "Train acc mean/std: %.6f ± %.6f"
-        % (float(np.mean(train_accs)), float(np.std(train_accs, ddof=ddof)))
+        f"Model: {args.dataset} / {args.ordering} / {args.model}"
     )
     io.cprint(
-        "Test acc mean/std: %.6f ± %.6f"
-        % (float(np.mean(test_accs)), float(np.std(test_accs, ddof=ddof)))
+        "Test accuracy: %.6f ± %.6f"
+        % (test_mean, test_std)
     )
     io.cprint(
-        "Train avg acc mean/std: %.6f ± %.6f"
-        % (
-            float(np.mean(train_avg_accs)),
-            float(np.std(train_avg_accs, ddof=ddof)),
-        )
+        "Generalization gap (train - test): %.6f ± %.6f"
+        % (gap_mean, gap_std)
     )
-    io.cprint(
-        "Test avg acc mean/std: %.6f ± %.6f"
-        % (
-            float(np.mean(test_avg_accs)),
-            float(np.std(test_avg_accs, ddof=ddof)),
-        )
-    )
-
-    io.cprint("========================================")
+    io.cprint("===================================")
 
     return all_results
-
 
 def run_test(args, io):
     datamodule = ModelNetDataModule(args)
