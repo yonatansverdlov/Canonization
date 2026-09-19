@@ -8,13 +8,12 @@ This repository contains the experiments for studying canonization and invariant
 
 ## Contents
 
-- [Installation](#installation)
-- [ModelNet](#modelnet)
-  - [Covering Number Experiment](#covering-number-experiment)
-  - [Point-Cloud Classification](#point-cloud-classification)
-  - [PCA Sign Canonization](#pca-sign-canonization)
-- [Rotated MNIST](#rotated-mnist)
-- [Deep Weight Spaces](#deep-weight-spaces)
+- [Canonization](#canonization)
+  - [Contents](#contents)
+  - [Installation](#installation)
+  - [ModelNet](#modelnet)
+    - [Data Setup](#data-setup)
+    - [Covering Number Experiment](#covering-number-experiment)
 
 ## Installation
 
@@ -36,4 +35,26 @@ Install all required dependencies:
 
 ```bash
 pip install -r requirements.txt
+```
+## ModelNet
+
+### Data Setup
+
+Download and prepare the required ModelNet datasets by running:
+
+```bash
+python scripts/setup_modelnet.py
+```
+### Covering Number Experiment
+
+Run the experiment on ModelNet10:
+
+```bash
+python scripts/run_modelnet_covering.py --dataset 10
+```
+
+Run the experiment on ModelNet40:
+
+```bash
+python scripts/run_modelnet_covering.py --dataset 40
 ```
