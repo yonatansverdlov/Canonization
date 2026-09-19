@@ -323,10 +323,6 @@ def main():
     print("Using test  cache:", test_path)
     print("Dataset reduction mode:", args.dataset_reduce)
 
-    if "hilbm10" not in os.path.basename(train_path):
-        print("WARNING: your old l2_sorted_hilbert_distance used m=10.")
-        print("         Your cache filename suggests a different hilbert_m, so hilbert results may differ.")
-
     train_cache = load_cache_dict(train_path)
     test_cache = load_cache_dict(test_path)
     train_ds = CachedDataDictDataset(train_cache)
