@@ -552,9 +552,8 @@ def run_train_multiple_seeds(args, io):
 
     io.cprint("")
     io.cprint("========== FINAL SUMMARY ==========")
-    io.cprint(
-        f"Model: {args.dataset} / {args.ordering} / {args.model}"
-    )
+    io.cprint(f"Dataset: {args.dataset}")
+    io.cprint(f"Model: {args.ordering}")
     io.cprint(
         "Test accuracy: %.6f ± %.6f"
         % (test_mean, test_std)
