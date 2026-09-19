@@ -6,6 +6,7 @@ import subprocess
 import sys
 import zipfile
 from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 from tqdm import tqdm
 from torch_geometric.datasets import ModelNet
@@ -24,6 +25,20 @@ MODELNET40_H5_URL = (
 )
 MODELNET40_H5_DIR = TRAINING_DATA_ROOT / MODELNET40_H5_NAME
 MODELNET40_H5_ARCHIVE = TRAINING_DATA_ROOT / f"{MODELNET40_H5_NAME}.zip"
+MODELNET40_H5_FALLBACK_BASE = (
+    "https://share.phys.ethz.ch/~gseg/Predator/data/"
+    "modelnet40_ply_hdf5_2048"
+)
+MODELNET40_H5_FILES = [
+    "ply_data_train0.h5",
+    "ply_data_train1.h5",
+    "ply_data_train2.h5",
+    "ply_data_train3.h5",
+    "ply_data_train4.h5",
+    "ply_data_test0.h5",
+    "ply_data_test1.h5",
+    "shape_names.txt",
+]
 
 MODELNET10_H5_DIR = TRAINING_DATA_ROOT / "modelnet10_ply_hdf5_2048"
 
@@ -46,7 +61,7 @@ def download_with_progress(url: str, destination: Path) -> None:
         headers["Range"] = f"bytes={existing}-"
 
     request = Request(url, headers=headers)
-    response = urlopen(request)
+    response = urlopen(request, timeout=30)
 
     status = getattr(response, "status", 200)
     resume = existing > 0 and status == 206
@@ -155,6 +170,23 @@ def ensure_pyg_modelnet(name: str) -> None:
     print(f"[ModelNet{name}] Ready: {root}")
 
 
+def download_modelnet40_h5_fallback() -> None:
+    print(
+        "[ModelNet40 HDF5] Falling back to ETH mirror "
+        "(individual HDF5 files)."
+    )
+    MODELNET40_H5_DIR.mkdir(parents=True, exist_ok=True)
+
+    for filename in MODELNET40_H5_FILES:
+        destination = MODELNET40_H5_DIR / filename
+        if destination.exists() and destination.stat().st_size > 0:
+            print(f"[ModelNet40 HDF5] Exists: {filename}")
+            continue
+
+        url = f"{MODELNET40_H5_FALLBACK_BASE}/{filename}"
+        download_with_progress(url, destination)
+
+
 def ensure_modelnet40_h5() -> None:
     print()
     print("[ModelNet40 HDF5] Checking dataset...")
@@ -165,43 +197,48 @@ def ensure_modelnet40_h5() -> None:
 
     TRAINING_DATA_ROOT.mkdir(parents=True, exist_ok=True)
 
-    if MODELNET40_H5_ARCHIVE.exists():
-        if zipfile.is_zipfile(MODELNET40_H5_ARCHIVE):
-            print(
-                "[ModelNet40 HDF5] Archive already exists; "
-                "skipping download."
-            )
-        else:
-            print(
-                "[ModelNet40 HDF5] Existing archive is corrupted; "
-                "deleting it."
-            )
-            MODELNET40_H5_ARCHIVE.unlink()
+    try:
+        if MODELNET40_H5_ARCHIVE.exists():
+            if zipfile.is_zipfile(MODELNET40_H5_ARCHIVE):
+                print(
+                    "[ModelNet40 HDF5] Archive already exists; "
+                    "skipping download."
+                )
+            else:
+                print(
+                    "[ModelNet40 HDF5] Existing archive is corrupted; "
+                    "deleting it."
+                )
+                MODELNET40_H5_ARCHIVE.unlink()
 
-    if not MODELNET40_H5_ARCHIVE.exists():
-        download_with_progress(
-            MODELNET40_H5_URL,
-            MODELNET40_H5_ARCHIVE,
-        )
+        if not MODELNET40_H5_ARCHIVE.exists():
+            download_with_progress(
+                MODELNET40_H5_URL,
+                MODELNET40_H5_ARCHIVE,
+            )
 
-    if not zipfile.is_zipfile(MODELNET40_H5_ARCHIVE):
+        if not zipfile.is_zipfile(MODELNET40_H5_ARCHIVE):
+            MODELNET40_H5_ARCHIVE.unlink(missing_ok=True)
+            raise RuntimeError(
+                "Downloaded ModelNet40 archive is not a valid ZIP file."
+            )
+
+        print("[ModelNet40 HDF5] Extracting archive...")
+        with zipfile.ZipFile(MODELNET40_H5_ARCHIVE, "r") as zf:
+            zf.extractall(TRAINING_DATA_ROOT)
+
+    except (URLError, TimeoutError, OSError, RuntimeError) as exc:
+        print(f"[ModelNet40 HDF5] Primary download failed: {exc}")
         MODELNET40_H5_ARCHIVE.unlink(missing_ok=True)
-        raise RuntimeError(
-            "Downloaded ModelNet40 archive is not a valid ZIP file."
-        )
-
-    print("[ModelNet40 HDF5] Extracting archive...")
-    with zipfile.ZipFile(MODELNET40_H5_ARCHIVE, "r") as zf:
-        zf.extractall(TRAINING_DATA_ROOT)
+        download_modelnet40_h5_fallback()
 
     if not h5_dataset_complete(MODELNET40_H5_DIR):
         raise RuntimeError(
-            "ModelNet40 extraction finished, but the expected HDF5 "
+            "ModelNet40 setup finished, but the expected HDF5 "
             f"files were not found in {MODELNET40_H5_DIR}"
         )
 
     print(f"[ModelNet40 HDF5] Ready: {MODELNET40_H5_DIR}")
-
 
 def ensure_modelnet10_h5() -> None:
     print()
