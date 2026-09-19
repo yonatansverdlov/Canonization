@@ -30,6 +30,7 @@ def set_seed(seed: int) -> None:
 
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
 
 def worker_init_fn(worker_id: int) -> None:
@@ -82,7 +83,7 @@ def apply_model_config(args, explicit_args):
 
     Command-line arguments override config values.
     """
-    if args.model not in ["1", "2", "3", "4"]:
+    if args.model not in ["PurePCA", "FrameAveraging", "Skewness", "RandomFrame"]:
         return args
 
     config_path = Path(args.config)
@@ -188,30 +189,7 @@ def make_dataset(
 
 
 def build_loaders(args, device):
-    split_gen = torch.Generator().manual_seed(args.seed)
-
-    base_train_dataset = make_dataset(
-        num_points=args.num_points,
-        partition="train",
-        ordering=args.ordering,
-        use_fps=args.use_fps,
-        apply_jitter=False,
-        apply_scale=False,
-        apply_rotation=False,
-        apply_random_permutation=False,
-    )
-
-    val_size = int(len(base_train_dataset) * args.val_split)
-    val_size = max(1, val_size)
-    train_size = len(base_train_dataset) - val_size
-
-    train_subset, val_subset = random_split(
-        base_train_dataset,
-        [train_size, val_size],
-        generator=split_gen,
-    )
-
-    aug_train_dataset = make_dataset(
+    train_dataset = make_dataset(
         num_points=args.num_points,
         partition="train",
         ordering=args.ordering,
@@ -221,9 +199,6 @@ def build_loaders(args, device):
         apply_rotation=args.apply_rotation,
         apply_random_permutation=args.apply_random_permutation,
     )
-
-    train_dataset = Subset(aug_train_dataset, train_subset.indices)
-    val_dataset = Subset(base_train_dataset, val_subset.indices)
 
     test_dataset = make_dataset(
         num_points=args.num_points,
@@ -236,6 +211,9 @@ def build_loaders(args, device):
         apply_random_permutation=False,
     )
 
+    train_gen = torch.Generator().manual_seed(args.seed)
+    test_gen = torch.Generator().manual_seed(args.seed + 100000)
+
     common_loader_kwargs = dict(
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -247,13 +225,7 @@ def build_loaders(args, device):
         train_dataset,
         shuffle=True,
         drop_last=False,
-        **common_loader_kwargs,
-    )
-
-    val_loader = DataLoader(
-        val_dataset,
-        shuffle=False,
-        drop_last=False,
+        generator=train_gen,
         **common_loader_kwargs,
     )
 
@@ -261,10 +233,11 @@ def build_loaders(args, device):
         test_dataset,
         shuffle=False,
         drop_last=False,
+        generator=test_gen,
         **common_loader_kwargs,
     )
 
-    return train_loader, val_loader, test_loader
+    return train_loader, test_loader
 
 
 # ====================== MODEL ====================== #
@@ -319,21 +292,20 @@ def run_once(args):
     )
 
     if args.save_path is None:
-        args.save_path = f"checkpoints/best_model_m{args.model}_{args.exp_name}_seed{args.seed}.pth"
+        args.save_path = (
+            f"checkpoints/{args.model}_{args.exp_name}_seed{args.seed}.pth"
+        )
 
     save_path = Path(args.save_path)
     save_path.parent.mkdir(parents=True, exist_ok=True)
 
-    train_loader, val_loader, test_loader = build_loaders(args, device)
+    train_loader, test_loader = build_loaders(args, device)
 
     model = build_model(args, device)
     optimizer = build_optimizer(args, model)
     criterion = nn.NLLLoss()
 
-    best_val_acc = -1.0
-    best_test_acc = -1.0
-    best_epoch = -1
-    best_train_acc = -1.0
+    final_train_acc = float("nan")
 
     for epoch in range(1, args.epochs + 1):
         tr_loss, tr_acc = train_one_epoch(
@@ -343,70 +315,44 @@ def run_once(args):
             criterion,
             device,
         )
-        val_loss, val_acc = evaluate(model, val_loader, criterion, device)
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
-
-        if test_acc > best_test_acc:
-            best_test_acc = test_acc
-            best_val_acc = val_acc
-            best_train_acc = tr_acc
-            best_epoch = epoch
-
-            torch.save(
-                {
-                    "model_state_dict": model.state_dict(),
-                    "args": vars(args),
-                    "epoch": epoch,
-                    "train_acc": tr_acc,
-                    "val_acc": val_acc,
-                    "test_acc": test_acc,
-                    "best_test_acc": best_test_acc,
-                    "best_val_acc": best_val_acc,
-                    "best_train_acc": best_train_acc,
-                    "best_epoch": best_epoch,
-                    "model_name": args.model,
-                },
-                save_path,
-            )
+        final_train_acc = tr_acc
 
         print(
             f"Epoch {epoch:03d} | "
-            f"Train Loss: {tr_loss:.4f} | Train Acc: {tr_acc:.4f} | "
-            f"Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f} | "
-            f"Test Loss: {test_loss:.4f} | Test Acc: {test_acc:.4f} | "
-            f"Best Test Acc: {best_test_acc:.4f}"
+            f"Train Loss: {tr_loss:.4f} | Train Acc: {tr_acc:.4f}"
         )
 
-    checkpoint = torch.load(save_path, map_location=device)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-    final_train_loss, final_train_acc = evaluate(model, train_loader, criterion, device)
-    final_val_loss, final_val_acc = evaluate(model, val_loader, criterion, device)
-    final_test_loss, final_test_acc = evaluate(model, test_loader, criterion, device)
-
-    print()
-    print(
-        f"Best checkpoint: epoch {best_epoch:03d} | "
-        f"Best Train Acc: {best_train_acc:.4f} | "
-        f"Best Val Acc: {best_val_acc:.4f} | "
-        f"Best Test Acc: {best_test_acc:.4f}"
+    torch.save(
+        {
+            "model_state_dict": model.state_dict(),
+            "args": vars(args),
+            "epoch": args.epochs,
+            "train_acc": final_train_acc,
+            "model_name": args.model,
+        },
+        save_path,
     )
-    print(
-        f"Reloaded checkpoint -> "
-        f"Train Loss: {final_train_loss:.4f} | Train Acc: {final_train_acc:.4f} | "
-        f"Val Loss: {final_val_loss:.4f} | Val Acc: {final_val_acc:.4f} | "
-        f"Test Loss: {final_test_loss:.4f} | Test Acc: {final_test_acc:.4f}"
+
+    _, final_train_eval_acc = evaluate(
+        model,
+        train_loader,
+        criterion,
+        device,
     )
+    _, final_test_acc = evaluate(
+        model,
+        test_loader,
+        criterion,
+        device,
+    )
+
+    gen_gap = final_train_eval_acc - final_test_acc
 
     return {
         "seed": args.seed,
-        "best_epoch": best_epoch,
-        "best_train_acc": best_train_acc,
-        "best_val_acc": best_val_acc,
-        "best_test_acc": best_test_acc,
-        "final_train_acc": final_train_acc,
-        "final_val_acc": final_val_acc,
-        "final_test_acc": final_test_acc,
+        "train_acc": final_train_eval_acc,
+        "test_acc": final_test_acc,
+        "gen_gap": gen_gap,
     }
 
 
@@ -423,54 +369,30 @@ def run_many_seeds(args):
         result = run_once(run_args)
         all_results.append(result)
 
-        print(
-            f"Seed {seed} done | "
-            f"Final Train Acc: {result['final_train_acc']:.4f} | "
-            f"Final Test Acc: {result['final_test_acc']:.4f} | "
-            f"Best Test Acc: {result['best_test_acc']:.4f}"
-        )
-
-    final_train_accs = np.array(
-        [r["final_train_acc"] for r in all_results],
+    test_accs = np.array(
+        [r["test_acc"] for r in all_results],
         dtype=np.float64,
     )
-    final_test_accs = np.array(
-        [r["final_test_acc"] for r in all_results],
-        dtype=np.float64,
-    )
-    best_test_accs = np.array(
-        [r["best_test_acc"] for r in all_results],
+    gen_gaps = np.array(
+        [r["gen_gap"] for r in all_results],
         dtype=np.float64,
     )
 
     ddof = 1 if len(all_results) > 1 else 0
 
     print()
-    print("========== MULTI-SEED SUMMARY ==========")
-
-    for r in all_results:
-        print(
-            f"Seed {r['seed']} | "
-            f"Best Epoch: {r['best_epoch']} | "
-            f"Final Train Acc: {r['final_train_acc']:.6f} | "
-            f"Final Test Acc: {r['final_test_acc']:.6f} | "
-            f"Best Test Acc: {r['best_test_acc']:.6f}"
-        )
-
-    print()
+    print("========== FINAL SUMMARY ==========")
+    print(f"Dataset: {args.dataset}")
+    print(f"Model: {args.model}")
     print(
-        "Final Train Acc mean/std: "
-        f"{final_train_accs.mean():.6f} ± {final_train_accs.std(ddof=ddof):.6f}"
+        "Test accuracy: "
+        f"{test_accs.mean():.6f} ± {test_accs.std(ddof=ddof):.6f}"
     )
     print(
-        "Final Test Acc mean/std: "
-        f"{final_test_accs.mean():.6f} ± {final_test_accs.std(ddof=ddof):.6f}"
+        "Generalization gap (train - test): "
+        f"{gen_gaps.mean():.6f} ± {gen_gaps.std(ddof=ddof):.6f}"
     )
-    print(
-        "Best Test Acc mean/std: "
-        f"{best_test_accs.mean():.6f} ± {best_test_accs.std(ddof=ddof):.6f}"
-    )
-    print("========================================")
+    print("===================================")
 
     return all_results
 
@@ -497,7 +419,6 @@ def main():
     parser.add_argument("--lr", type=float, default=0.001118604121563404)
     parser.add_argument("--weight_decay", type=float, default=0.000012114201421212455)
     parser.add_argument("--num_points", type=int, default=1024)
-    parser.add_argument("--val_split", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=5)
     parser.add_argument("--num_workers", type=int, default=4)
     parser.add_argument("--save_path", type=str, default=None)
