@@ -17,4 +17,4 @@ scikit-learn
 matplotlib
 seaborn
 pytest
-git+https://github.com/Kitsunetic/space-filling-pytorch.git
+-e git+https://github.com/Kitsunetic/space-filling-pytorch.git#egg=space-filling-pytorch
