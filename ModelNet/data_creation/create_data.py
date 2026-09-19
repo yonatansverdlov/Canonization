@@ -139,7 +139,7 @@ def parse_args():
                         help="ModelNet subset: 10 or 40")
     parser.add_argument("--hilbert_m", type=int, default=12,
                         help="Hilbert discretization parameter (recommend ~10–20)")
-    parser.add_argument("--force_reload", action="store_true",default=True,
+    parser.add_argument("--force_reload", action="store_true", default=False,
                         help="Force re-processing of the dataset")
     parser.add_argument("--datasets_root", type=str, default="data/datasets",
                         help="Base datasets folder (will use ModelNet10/ModelNet40 under it)")
