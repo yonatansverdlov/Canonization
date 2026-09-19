@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import zipfile
@@ -79,12 +80,75 @@ def download_with_progress(url: str, destination: Path) -> None:
 
 def ensure_pyg_modelnet(name: str) -> None:
     root = PYG_DATA_ROOT / f"ModelNet{name}"
+    raw_dir = root / "raw"
+    processed_dir = root / "processed"
+
+    urls = {
+        "10": (
+            "http://3dvision.princeton.edu/projects/2014/"
+            "3DShapeNets/ModelNet10.zip"
+        ),
+        "40": "http://modelnet.cs.princeton.edu/ModelNet40.zip",
+    }
 
     print()
     print(f"[ModelNet{name}] Checking PyG dataset...")
 
-    # Instantiating both splits triggers PyG's own download/processing only
-    # when required. Existing data is reused automatically.
+    processed_complete = (
+        (processed_dir / "training.pt").exists()
+        and (processed_dir / "test.pt").exists()
+    )
+    raw_available = raw_dir.is_dir() and any(raw_dir.iterdir())
+
+    if not processed_complete and not raw_available:
+        root.mkdir(parents=True, exist_ok=True)
+
+        archive = root / f"ModelNet{name}.zip"
+
+        if archive.exists() and not zipfile.is_zipfile(archive):
+            print(
+                f"[ModelNet{name}] Existing archive is corrupted; "
+                "deleting it."
+            )
+            archive.unlink()
+
+        if not archive.exists():
+            download_with_progress(urls[name], archive)
+
+        if not zipfile.is_zipfile(archive):
+            archive.unlink(missing_ok=True)
+            raise RuntimeError(
+                f"Downloaded ModelNet{name} archive is not a valid ZIP file."
+            )
+
+        extracted_dir = root / f"ModelNet{name}"
+
+        print(f"[ModelNet{name}] Extracting archive...")
+        with zipfile.ZipFile(archive, "r") as zf:
+            members = zf.infolist()
+            for member in tqdm(
+                members,
+                desc=f"Extracting ModelNet{name}",
+                unit="file",
+            ):
+                zf.extract(member, root)
+
+        if not extracted_dir.is_dir():
+            raise RuntimeError(
+                f"Expected extracted directory was not found: {extracted_dir}"
+            )
+
+        if raw_dir.exists():
+            shutil.rmtree(raw_dir)
+        extracted_dir.rename(raw_dir)
+
+        metadata_dir = root / "__MACOSX"
+        if metadata_dir.exists():
+            shutil.rmtree(metadata_dir)
+
+        archive.unlink(missing_ok=True)
+
+    # PyG now only processes/loads the already downloaded raw files.
     ModelNet(root=str(root), name=name, train=True)
     ModelNet(root=str(root), name=name, train=False)
 
