@@ -22,9 +22,9 @@ def parse_args():
     )
     parser.add_argument(
         "--ordering",
-        choices=["all", "ply", "lex", "hilbert"],
-        default="all",
-        help="Ordering method to run. Default: all.",
+        choices=["ply", "lex", "hilbert"],
+        required=True,
+        help="Ordering method to run.",
     )
     return parser.parse_args()
 
@@ -39,33 +39,25 @@ def main():
     args = parse_args()
 
     dataset = f"modelnet{args.dataset}"
-    orderings = (
-        ["ply", "lex", "hilbert"]
-        if args.ordering == "all"
-        else [args.ordering]
+    ordering = args.ordering
+
+    print()
+    print(f"=== {dataset}: {ordering} (5 seeds) ===")
+
+    run(
+        [
+            sys.executable,
+            "train.py",
+            "--dataset",
+            dataset,
+            "--ordering",
+            ordering,
+            "--run_5_seeds",
+            "true",
+            "--exp_name",
+            f"{dataset}_{ordering}",
+        ]
     )
-
-    for ordering in orderings:
-        print()
-        print(
-            f"=== {dataset}: {ordering} "
-            "(5 seeds) ==="
-        )
-
-        run(
-            [
-                sys.executable,
-                "train.py",
-                "--dataset",
-                dataset,
-                "--ordering",
-                ordering,
-                "--run_5_seeds",
-                "true",
-                "--exp_name",
-                f"{dataset}_{ordering}",
-            ]
-        )
 
 
 if __name__ == "__main__":
