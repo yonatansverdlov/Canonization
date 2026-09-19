@@ -1,6 +1,3 @@
-torch
-torchvision
-torchaudio
 torch-geometric
 lightning
 pytorch-lightning
