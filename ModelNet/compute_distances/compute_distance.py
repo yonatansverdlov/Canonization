@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import os
 import argparse
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Literal
 
@@ -325,7 +327,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.use_deterministic_algorithms(True)
 
     if args.device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
