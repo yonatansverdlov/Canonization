@@ -157,6 +157,7 @@ class DatasetDataModule(pl.LightningDataModule):
 
 def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size=256, model_type="canonized"):
     strict_determinism = model_type != "learned_can"
+    trainer_deterministic = True if strict_determinism else "warn"
     set_seed(seed, strict=strict_determinism)
 
     if model_type == "learned_can" and torch.cuda.is_available():
@@ -196,7 +197,7 @@ def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size
     trainer = pl.Trainer(
         max_epochs=100,
         accelerator="auto",
-        deterministic=True,
+        deterministic=trainer_deterministic,
         callbacks=[checkpoint_callback, early_stopping],
         check_val_every_n_epoch=10,
         limit_val_batches=100,
