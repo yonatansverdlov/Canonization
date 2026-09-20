@@ -86,21 +86,9 @@ The experiment reports `l2`, `group`, and `can_frozen`; `can_learned` is also re
 
 ### Data Setup
 
-Download the original DWS MNIST-INR and Fashion-MNIST-INR datasets and convert them to PyG `Data` objects:
-
 ```bash
 python scripts/setup_dws_data.py
 ```
-
-Each processed sample stores the same INR twice:
-
-- `raw`: the original PyTorch state dict.
-- `canon`: the canonized state dict.
-
-The canonization proceeds sequentially from input to output. For each hidden layer, neurons are sorted lexicographically using the key `[incoming weights, bias, sorted outgoing weights]`. If this gives permutation (P_l), the rows of (W_l) and (b_l) are permuted and the same permutation is propagated to the columns of (W_{l+1}). The output layer is not sorted.
-
-The processed split contains 55,000 train, 5,000 validation, and 10,000 test examples. For MNIST-INR, split seed `0` is used only once to deterministically create the train/validation split; this is independent of the training seeds. Fashion-MNIST-INR uses the authors' bundled `splits.json`.
-
 
 ### Training
 
@@ -119,9 +107,6 @@ python scripts/run_dws.py --dataset fmnist --model mlp
 python scripts/run_dws.py --dataset fmnist --model can_mlp
 python scripts/run_dws.py --dataset fmnist --model dwsnet
 ```
-
-Each run uses seeds `0 1 2`, 100 epochs, batch size `512`, AdamW with learning rate `5e-3` and weight decay `5e-4`, and selects the checkpoint with the highest validation accuracy for each seed. `MLP` uses the raw INR parameters, `CanMLP` uses the precomputed canonized parameters with separately recomputed canonized normalization statistics, and `DWSNet` uses the original DWS architecture and its original generic INR training augmentation. Hidden-neuron permutation augmentation is disabled.
-
 
 ## Reproducibility
 
