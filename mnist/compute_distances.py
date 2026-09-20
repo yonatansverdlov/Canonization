@@ -68,7 +68,7 @@ def build_frozen_canonization_model(device: str, seed: int = 0) -> CNp4CNN:
     return model
 
 
-def find_learned_checkpoint() -> str:
+def find_learned_checkpoint() -> str | None:
     checkpoint_dir = (
         Path(__file__).resolve().parent
         / "data"
@@ -78,10 +78,7 @@ def find_learned_checkpoint() -> str:
     checkpoints = list(checkpoint_dir.glob("best-learned_can-seed-0*.ckpt"))
 
     if not checkpoints:
-        raise FileNotFoundError(
-            "Could not find a trained learned_can checkpoint for seed 0. "
-            "Run: python scripts/run_rotated_mnist.py --model learned_can"
-        )
+        return None
 
     newest = max(checkpoints, key=lambda path: path.stat().st_mtime)
     return str(newest)
@@ -198,22 +195,35 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
 
     train_rot_bank = build_rotated_train_bank(train_images)
 
-    learned_model = build_learned_canonization_model(
-        device=device,
-        checkpoint_path=learned_checkpoint,
-    )
+    resolved_learned_checkpoint = learned_checkpoint or find_learned_checkpoint()
+
+    learned_model = None
+    if resolved_learned_checkpoint is not None:
+        learned_model = build_learned_canonization_model(
+            device=device,
+            checkpoint_path=resolved_learned_checkpoint,
+        )
+    else:
+        print(
+            "No learned_can checkpoint found; "
+            "skipping can_learned distance."
+        )
+
     frozen_model = build_frozen_canonization_model(
         device=device,
         seed=0,
     )
 
-    train_can_learned = compute_canon_train_bank(
-        train_images=train_images,
-        model=learned_model,
-        device=device,
-        batch_size=batch_size,
-        name="learned",
-    )
+    train_can_learned = None
+    if learned_model is not None:
+        train_can_learned = compute_canon_train_bank(
+            train_images=train_images,
+            model=learned_model,
+            device=device,
+            batch_size=batch_size,
+            name="learned",
+        )
+
     train_can_frozen = compute_canon_train_bank(
         train_images=train_images,
         model=frozen_model,
@@ -232,11 +242,13 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
     for i in range(test_images.shape[0]):
         x = test_images[i].to(device)
 
-        x_can_learned = canonize_flat_batch(
-            test_images[i : i + 1],
-            model=learned_model,
-            device=device,
-        ).squeeze(0).to(device)
+        x_can_learned = None
+        if learned_model is not None:
+            x_can_learned = canonize_flat_batch(
+                test_images[i : i + 1],
+                model=learned_model,
+                device=device,
+            ).squeeze(0).to(device)
 
         x_can_frozen = canonize_flat_batch(
             test_images[i : i + 1],
@@ -252,7 +264,12 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
         for s in range(0, N, batch_size):
             Y_l2 = train_images[s : s + batch_size].to(device)
             Y_rot = train_rot_bank[s : s + batch_size].to(device)
-            Y_can_learned = train_can_learned[s : s + batch_size].to(device)
+            Y_can_learned = None
+            if train_can_learned is not None:
+                Y_can_learned = train_can_learned[
+                    s : s + batch_size
+                ].to(device)
+
             Y_can_frozen = train_can_frozen[s : s + batch_size].to(device)
 
             d_l2 = rms_distance_batch(x, Y_l2)
@@ -265,11 +282,13 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
             ).view(B, 4).min(dim=1).values
             bmin_group = d_group.min()
 
-            d_can_learned = rms_distance_batch(
-                x_can_learned,
-                Y_can_learned,
-            )
-            bmin_can_learned = d_can_learned.min()
+            bmin_can_learned = None
+            if x_can_learned is not None and Y_can_learned is not None:
+                d_can_learned = rms_distance_batch(
+                    x_can_learned,
+                    Y_can_learned,
+                )
+                bmin_can_learned = d_can_learned.min()
 
             d_can_frozen = rms_distance_batch(
                 x_can_frozen,
@@ -287,11 +306,13 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
                 if best_group is None
                 else torch.minimum(best_group, bmin_group)
             )
-            best_can_learned = (
-                bmin_can_learned
-                if best_can_learned is None
-                else torch.minimum(best_can_learned, bmin_can_learned)
-            )
+            if bmin_can_learned is not None:
+                best_can_learned = (
+                    bmin_can_learned
+                    if best_can_learned is None
+                    else torch.minimum(best_can_learned, bmin_can_learned)
+                )
+
             best_can_frozen = (
                 bmin_can_frozen
                 if best_can_frozen is None
@@ -300,7 +321,9 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
 
         vals_l2.append(float(best_l2.item()))
         vals_group.append(float(best_group.item()))
-        vals_can_learned.append(float(best_can_learned.item()))
+        if best_can_learned is not None:
+            vals_can_learned.append(float(best_can_learned.item()))
+
         vals_can_frozen.append(float(best_can_frozen.item()))
 
         if (i + 1) % 100 == 0:
@@ -311,12 +334,16 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
             return float(sum(vals) / len(vals))
         return float(max(vals))
 
-    return {
+    results = {
         "l2": reduce_vals(vals_l2),
         "group": reduce_vals(vals_group),
-        "can_learned": reduce_vals(vals_can_learned),
         "can_frozen": reduce_vals(vals_can_frozen),
     }
+
+    if vals_can_learned:
+        results["can_learned"] = reduce_vals(vals_can_learned)
+
+    return results
 
 
 def parse_args():
