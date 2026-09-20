@@ -312,16 +312,35 @@ def parse_args():
         choices=["average", "max"],
         help="How to reduce per-test nearest-neighbor distances over the whole test set",
     )
+    p.add_argument(
+        "--device",
+        type=str,
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Computation device. Use cpu for strongest cross-run reproducibility.",
+    )
     return p.parse_args()
 
 
 def main():
     args = parse_args()
 
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    elif args.device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("--device cuda requested but CUDA is not available")
+        device = "cuda"
+    else:
+        device = "cpu"
+
     train_path, test_path = find_cache_paths(args.P, args.dataset_name, hilbert_m=12)
     print("Using train cache:", train_path)
     print("Using test  cache:", test_path)
     print("Dataset reduction mode:", args.dataset_reduce)
+    print("Distance device:", device)
 
     train_cache = load_cache_dict(train_path)
     test_cache = load_cache_dict(test_path)
@@ -334,7 +353,7 @@ def main():
     cfg = CloudDistanceConfig(
         P=args.P,
         train_batch=4096,
-        device=None,
+        device=device,
         dataset_reduce=args.dataset_reduce,
     )
 
