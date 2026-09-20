@@ -230,6 +230,7 @@ class EquivariantCanonizationNetwork(nn.Module):
         num_rotations=4,
         device="cuda",
         batch_size=256,
+        freeze_canonization=False,
     ):
         super().__init__()
 
@@ -241,7 +242,11 @@ class EquivariantCanonizationNetwork(nn.Module):
             num_layers=canonization_num_layers,
             device=device,
         )
-        self.freeze = True
+        self.freeze = freeze_canonization
+        if self.freeze:
+            for param in self.canonization_network.parameters():
+                param.requires_grad_(False)
+
         self.base_encoder = base_encoder
         self.num_rotations = num_rotations
         self.beta = canonization_beta
@@ -340,6 +345,7 @@ class CNp4CNN(nn.Module):
         canonization_kernel_size=3,
         canonization_beta=1.0,
         num_rotations=4,
+        freeze_canonization=False,
     ):
         super().__init__()
 
@@ -362,6 +368,7 @@ class CNp4CNN(nn.Module):
             num_rotations=num_rotations,
             device=device,
             batch_size=batch_size,
+            freeze_canonization=freeze_canonization,
         )
 
     def forward(self, x):
