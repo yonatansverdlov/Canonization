@@ -9,6 +9,8 @@
 #   data.y            : (1,)  class label (long)
 import os
 import argparse
+import random
+import numpy as np
 import torch
 from torch_geometric.datasets import ModelNet
 from torch_geometric.transforms import SamplePoints
@@ -99,13 +101,31 @@ def hilbert_perm_3d(X: torch.Tensor, m: int) -> torch.Tensor:
 
 
 # -------------------------
+# Deterministic sampling
+# -------------------------
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+
+# -------------------------
 # Build caches
 # -------------------------
 @torch.no_grad()
-def build_split_cache(ds: ModelNet, P: int, hilbert_m: int) -> Dict[int, Data]:
+def build_split_cache(
+    ds: ModelNet,
+    P: int,
+    hilbert_m: int,
+    split_seed: int,
+) -> Dict[int, Data]:
     out: Dict[int, Data] = {}
 
-    for i, d in enumerate(ds):
+    for i in range(len(ds)):
+        # SamplePoints is stochastic. Seed each sample independently so
+        # cache generation is reproducible and independent of iteration state.
+        set_seed(split_seed + i)
+        d = ds[i]
         x = d.pos.to(dtype=torch.float32).contiguous()  # (P,3)
         if x.shape != (P, 3):
             raise RuntimeError(f"Expected x shape {(P,3)}, got {tuple(x.shape)}")
@@ -141,6 +161,8 @@ def parse_args():
                         help="Hilbert discretization parameter (recommend ~10–20)")
     parser.add_argument("--force_reload", action="store_true", default=False,
                         help="Force re-processing of the dataset")
+    parser.add_argument("--seed", type=int, default=0,
+                        help="Base seed for deterministic point sampling")
     parser.add_argument("--datasets_root", type=str, default="data/datasets",
                         help="Base datasets folder (will use ModelNet10/ModelNet40 under it)")
     return parser.parse_args()
@@ -172,11 +194,23 @@ def main():
         force_reload=force_reload,
     )
 
+    print(f"Base sampling seed: {args.seed}")
+
     print("Building train cache...")
-    train_cache = build_split_cache(train_ds, P=P, hilbert_m=hilbert_m)
+    train_cache = build_split_cache(
+        train_ds,
+        P=P,
+        hilbert_m=hilbert_m,
+        split_seed=args.seed,
+    )
 
     print("Building test cache...")
-    test_cache = build_split_cache(test_ds, P=P, hilbert_m=hilbert_m)
+    test_cache = build_split_cache(
+        test_ds,
+        P=P,
+        hilbert_m=hilbert_m,
+        split_seed=args.seed + 1_000_000,
+    )
 
     tag = f"modelnet{args.dataset_name}"
     os.makedirs("data", exist_ok=True)
