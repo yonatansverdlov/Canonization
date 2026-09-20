@@ -329,11 +329,17 @@ def train_one_seed(
             best_val=f"{best_val_acc:.4f}",
         )
 
-    checkpoint = torch.load(
-        checkpoint_path,
-        map_location=device,
-        weights_only=True,
-    )
+    try:
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location=device,
+            weights_only=True,
+        )
+    except TypeError:
+        checkpoint = torch.load(
+            checkpoint_path,
+            map_location=device,
+        )
     model.load_state_dict(
         checkpoint["model_state_dict"],
         strict=True,
