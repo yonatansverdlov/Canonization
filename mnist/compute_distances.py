@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 from typing import Dict, List
 import torch
 from utils.data_funcs import get_dataset, obtain
@@ -237,7 +238,7 @@ def parse_args():
     parser.add_argument(
         "--data_path",
         type=str,
-        default="data/rotated_mnist",
+        default=str(Path(__file__).resolve().parent / "data" / "rotated_mnist"),
     )
 
     parser.add_argument(
