@@ -114,12 +114,57 @@ def extract_zip_with_progress(archive: Path, destination: Path) -> None:
             zf.extract(member, destination)
 
 
-def source_ready(source_root: Path) -> bool:
-    if not source_root.is_dir():
-        return False
+def find_source_dataset_root(source_root: Path, dataset: str):
+    """
+    Return the directory that directly contains the source dataset.
 
-    count = sum(1 for _ in source_root.rglob("*.pth"))
-    return count == 70000
+    FMNIST ships inside an extra fmnist_inrs/ directory and includes
+    statistics.pth in addition to the 70,000 model checkpoints.
+    """
+    if not source_root.is_dir():
+        return None
+
+    if dataset == "fmnist":
+        candidates = [source_root] + [
+            path.parent for path in source_root.rglob("splits.json")
+        ]
+
+        for candidate in candidates:
+            train_dir = candidate / "train"
+            test_dir = candidate / "test"
+            split_path = candidate / "splits.json"
+
+            if not (
+                train_dir.is_dir()
+                and test_dir.is_dir()
+                and split_path.exists()
+            ):
+                continue
+
+            model_count = (
+                sum(1 for _ in train_dir.glob("model_*.pth"))
+                + sum(1 for _ in test_dir.glob("model_*.pth"))
+            )
+
+            if model_count == 70000:
+                return candidate
+
+        return None
+
+    model_files = [
+        path
+        for path in source_root.rglob("*.pth")
+        if path.name != "statistics.pth"
+    ]
+
+    if len(model_files) == 70000:
+        return source_root
+
+    return None
+
+
+def source_ready(source_root: Path, dataset: str) -> bool:
+    return find_source_dataset_root(source_root, dataset) is not None
 
 
 def ensure_source_dataset(dataset: str) -> Path:
@@ -130,9 +175,10 @@ def ensure_source_dataset(dataset: str) -> Path:
     print()
     print(f"[{dataset}] Checking source INRs...")
 
-    if source_ready(source_root):
-        print(f"[{dataset}] Source already available: {source_root}")
-        return source_root
+    dataset_root = find_source_dataset_root(source_root, dataset)
+    if dataset_root is not None:
+        print(f"[{dataset}] Source already available: {dataset_root}")
+        return dataset_root
 
     if archive.exists() and not zipfile.is_zipfile(archive):
         print(f"[{dataset}] Corrupted archive found; deleting it.")
@@ -157,15 +203,17 @@ def ensure_source_dataset(dataset: str) -> Path:
         destination=source_root,
     )
 
-    if not source_ready(source_root):
+    dataset_root = find_source_dataset_root(source_root, dataset)
+    if dataset_root is None:
         raise RuntimeError(
-            f"No .pth INR files found after extraction in {source_root}"
+            f"Could not locate a complete {dataset} INR dataset after "
+            f"extraction in {source_root}"
         )
 
     archive.unlink(missing_ok=True)
 
-    print(f"[{dataset}] Source ready: {source_root}")
-    return source_root
+    print(f"[{dataset}] Source ready: {dataset_root}")
+    return dataset_root
 
 
 def infer_label(path: Path) -> int:
@@ -186,6 +234,69 @@ def infer_label(path: Path) -> int:
         raise RuntimeError(
             f"Could not infer integer label from path: {path}"
         ) from exc
+
+
+def build_fmnist_split(source_root: Path):
+    """
+    Use the authors' split bundled with FMNIST-INRs.
+
+    splits.json contains absolute paths from the original machine, so each
+    entry is resolved by its final two path components:
+        train/model_k.pth
+        test/model_k.pth
+
+    Labels are stored inside the checkpoint itself.
+    """
+    split_path = source_root / "splits.json"
+
+    with open(split_path) as f:
+        source_split = json.load(f)
+
+    split = {}
+
+    for split_name in ("train", "val", "test"):
+        examples = []
+
+        for path_str in source_split[split_name]:
+            original_path = Path(path_str)
+            rel = Path(
+                original_path.parent.name,
+                original_path.name,
+            )
+            path = source_root / rel
+
+            if not path.exists():
+                raise RuntimeError(
+                    f"FMNIST split entry does not exist locally: {path}"
+                )
+
+            examples.append(
+                {
+                    "path": path,
+                    "label": None,
+                }
+            )
+
+        split[split_name] = examples
+
+    expected = {
+        "train": 55000,
+        "val": 5000,
+        "test": 10000,
+    }
+
+    actual = {
+        name: len(split[name])
+        for name in ("train", "val", "test")
+    }
+
+    if actual != expected:
+        raise RuntimeError(
+            f"Unexpected FMNIST authors' split sizes: {actual}; "
+            f"expected {expected}"
+        )
+
+    return split
 
 
 def discover_source_split(source_root: Path):
@@ -213,7 +324,10 @@ def discover_source_split(source_root: Path):
     return train, test
 
 
-def build_split(source_root: Path, split_seed: int):
+def build_split(dataset: str, source_root: Path, split_seed: int):
+    if dataset == "fmnist":
+        return build_fmnist_split(source_root)
+
     train_all, test = discover_source_split(source_root)
 
     indices = list(range(len(train_all)))
@@ -244,7 +358,7 @@ def build_split(source_root: Path, split_seed: int):
     }
 
 
-def load_state_dict(path: Path):
+def load_checkpoint(path: Path):
     try:
         state = torch.load(
             path,
@@ -262,7 +376,15 @@ def load_state_dict(path: Path):
             f"Expected a state dict at {path}, got {type(state)}"
         )
 
-    return state
+    state = dict(state)
+    embedded_label = state.pop("label", None)
+
+    if isinstance(embedded_label, torch.Tensor):
+        embedded_label = int(embedded_label.item())
+    elif embedded_label is not None:
+        embedded_label = int(embedded_label)
+
+    return state, embedded_label
 
 
 def clone_state_to_cpu(state):
@@ -342,6 +464,7 @@ def build_geometric_dataset(
     processed_root.mkdir(parents=True, exist_ok=True)
 
     split = build_split(
+        dataset=dataset,
         source_root=source_root,
         split_seed=split_seed,
     )
@@ -355,10 +478,16 @@ def build_geometric_dataset(
     print(
         "Key: incoming weights + bias + sorted outgoing weights"
     )
-    print(
-        f"Split: 55000 train / 5000 val / 10000 test "
-        f"(split seed {split_seed})"
-    )
+    if dataset == "fmnist":
+        print(
+            "Split: 55000 train / 5000 val / 10000 test "
+            "(authors' bundled split)"
+        )
+    else:
+        print(
+            f"Split: 55000 train / 5000 val / 10000 test "
+            f"(split seed {split_seed})"
+        )
 
     generator = torch.Generator()
     generator.manual_seed(12345)
@@ -406,7 +535,16 @@ def build_geometric_dataset(
                 )
                 continue
 
-            state = load_state_dict(item["path"])
+            state, embedded_label = load_checkpoint(item["path"])
+
+            label = item["label"]
+            if label is None:
+                if embedded_label is None:
+                    raise RuntimeError(
+                        f"No label found for {item['path']}"
+                    )
+                label = embedded_label
+
             canonical = canonicalize_state_dict(state)
 
             if verified < verify:
@@ -439,7 +577,7 @@ def build_geometric_dataset(
                 raw=clone_state_to_cpu(state),
                 canon=clone_state_to_cpu(canonical),
                 y=torch.tensor(
-                    item["label"],
+                    label,
                     dtype=torch.long,
                 ),
                 split=split_name,
