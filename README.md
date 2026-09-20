@@ -101,6 +101,28 @@ The canonization proceeds sequentially from input to output. For each hidden lay
 
 The processed split is 55,000 train, 5,000 validation, and 10,000 test examples. MNIST uses split seed `0` by default; Fashion-MNIST uses the authors' bundled `splits.json`.
 
+
+### Training
+
+MNIST-INR:
+
+```bash
+python scripts/run_dws.py --dataset mnist --model mlp
+python scripts/run_dws.py --dataset mnist --model can_mlp
+python scripts/run_dws.py --dataset mnist --model dwsnet
+```
+
+Fashion-MNIST-INR:
+
+```bash
+python scripts/run_dws.py --dataset fmnist --model mlp
+python scripts/run_dws.py --dataset fmnist --model can_mlp
+python scripts/run_dws.py --dataset fmnist --model dwsnet
+```
+
+Each run uses seeds `0 1 2`, 100 epochs, batch size `512`, AdamW with learning rate `5e-3` and weight decay `5e-4`, and selects the checkpoint with the highest validation accuracy for each seed. `MLP` uses the raw INR parameters, `CanMLP` uses the precomputed canonized parameters with separately recomputed canonized normalization statistics, and `DWSNet` uses the original DWS architecture and its original generic INR training augmentation. Hidden-neuron permutation augmentation is disabled.
+
+
 ## Reproducibility
 
 Seeded experiments use deterministic Python, NumPy, PyTorch, CUDA, and DataLoader settings where supported. Rotated MNIST `learned_can` is not guaranteed to be bitwise deterministic on CUDA because its Kornia rotation uses CUDA `grid_sample` backward.
