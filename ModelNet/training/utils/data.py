@@ -29,7 +29,7 @@ def augment_so3_rotation(pointcloud):
     return np.dot(pointcloud, R)
 
 
-def farthest_point_sample(xyz, npoint):
+def farthest_point_sample(xyz, npoint, rng=None):
     """
     Numpy implementation of Farthest Point Sampling.
     Returns the INDICES of the sampled points.
@@ -37,7 +37,8 @@ def farthest_point_sample(xyz, npoint):
     N, C = xyz.shape
     centroids = np.zeros(npoint, dtype=int)
     distance = np.ones(N) * 1e10
-    farthest = np.random.randint(0, N)
+    rng = np.random if rng is None else rng
+    farthest = rng.randint(0, N)
 
     for i in range(npoint):
         centroids[i] = farthest
@@ -122,12 +123,18 @@ class OrderedModelNet40(Dataset):
                 num_samples = raw_data.shape[0]
                 fps_data = np.zeros((num_samples, num_points, 3), dtype=np.float32)
 
+                fps_rng = np.random.RandomState(0)
+
                 for i in range(num_samples):
                     if i % 500 == 0:
                         print(f"Processing {i}/{num_samples}...")
 
                     pc = raw_data[i]
-                    fps_idx = farthest_point_sample(pc, num_points)
+                    fps_idx = farthest_point_sample(
+                        pc,
+                        num_points,
+                        rng=fps_rng,
+                    )
                     fps_data[i] = pc[fps_idx]
 
                 self.data = fps_data
