@@ -116,9 +116,16 @@ Seeded experiments use deterministic Python, NumPy, PyTorch, CUDA, and DataLoade
 
 ## Citation
 
-If you find this code useful, please cite the accompanying paper:
+If you find this code useful, please cite:
 
-**When and How to Canonize: a Generalization Perspective**
+```bibtex
+@article{sverdlov2026canonize,
+  title={When and How to Canonize: A Generalization Perspective},
+  author={Sverdlov, Yonatan and Friedman, Benjamin and Hordan, Snir and Dym, Nadav},
+  journal={arXiv preprint arXiv:2605.11008},
+  year={2026}
+}
+```
 
 ## Contact
 
