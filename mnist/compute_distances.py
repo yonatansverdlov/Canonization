@@ -57,7 +57,7 @@ def build_blank_learned_canonization_model(device: str) -> CNp4CNN:
 
     No checkpoint is loaded.
     """
-    model = CNp4CNN(device=device)
+    model = CNp4CNN(device=device, freeze_canonization=True)
     model.eval()
     model.to(device)
     return model
