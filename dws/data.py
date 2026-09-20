@@ -7,6 +7,7 @@ from typing import NamedTuple
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
@@ -74,6 +75,94 @@ def state_to_tensors(state: dict) -> tuple[tuple[torch.Tensor, ...], tuple[torch
     return weights, biases
 
 
+def augment_tensors(
+    weights: tuple[torch.Tensor, ...],
+    biases: tuple[torch.Tensor, ...],
+    translation_scale: float = 0.25,
+    rotation_degree: float = 45.0,
+    noise_scale: float = 1e-1,
+    drop_rate: float = 1e-2,
+    resize_scale: float = 0.2,
+) -> tuple[tuple[torch.Tensor, ...], tuple[torch.Tensor, ...]]:
+    """
+    Original DWS INR augmentation used by the official MNIST trainer.
+    Hidden-neuron permutation augmentation is intentionally NOT included.
+    """
+    new_weights = [w.squeeze(-1).clone() for w in weights]
+    new_biases = [b.squeeze(-1).clone() for b in biases]
+
+    translation = torch.empty(
+        new_weights[0].shape[0]
+    ).uniform_(
+        -translation_scale,
+        translation_scale,
+    )
+
+    order = random.sample(
+        range(1, len(new_weights)),
+        1,
+    )[0]
+
+    bias_res = translation
+    layer_index = 0
+
+    for layer_index in range(order):
+        bias_res = bias_res @ new_weights[layer_index]
+
+    new_biases[layer_index] = (
+        new_biases[layer_index] + bias_res
+    )
+
+    if new_weights[0].shape[0] == 2:
+        angle = torch.empty(1).uniform_(
+            -rotation_degree,
+            rotation_degree,
+        )
+        angle_rad = angle * (torch.pi / 180.0)
+        c = torch.cos(angle_rad).squeeze(0)
+        s = torch.sin(angle_rad).squeeze(0)
+        rotation = torch.stack(
+            [
+                torch.stack([c, -s]),
+                torch.stack([s, c]),
+            ]
+        )
+        new_weights[0] = rotation @ new_weights[0]
+
+    # Keep the original DWS implementation exactly: this is a
+    # deterministic std-scaled offset, not sampled Gaussian noise.
+    new_weights = [
+        w + w.std() * noise_scale
+        for w in new_weights
+    ]
+    new_biases = [
+        b + b.std() * noise_scale if b.shape[0] > 1 else b
+        for b in new_biases
+    ]
+
+    new_weights = [
+        F.dropout(w, p=drop_rate, training=True)
+        for w in new_weights
+    ]
+    new_biases = [
+        F.dropout(b, p=drop_rate, training=True)
+        for b in new_biases
+    ]
+
+    random_scale = (
+        1.0
+        + (torch.rand(1).item() - 0.5)
+        * 2.0
+        * resize_scale
+    )
+    new_weights[0] = new_weights[0] * random_scale
+
+    return (
+        tuple(w.unsqueeze(-1) for w in new_weights),
+        tuple(b.unsqueeze(-1) for b in new_biases),
+    )
+
+
 def normalize_tensors(
     weights: tuple[torch.Tensor, ...],
     biases: tuple[torch.Tensor, ...],
@@ -103,6 +192,7 @@ class DWSProcessedDataset(Dataset):
         split: str,
         representation: str,
         statistics: dict | None,
+        augmentation: bool = False,
     ):
         if dataset not in {"mnist", "fmnist"}:
             raise ValueError(f"Unknown dataset: {dataset}")
@@ -115,6 +205,12 @@ class DWSProcessedDataset(Dataset):
         self.split = split
         self.representation = representation
         self.statistics = statistics
+        self.augmentation = augmentation
+
+        if self.augmentation and split != "train":
+            raise ValueError(
+                "DWS augmentation may only be enabled for the train split"
+            )
 
         self.root = PROCESSED_ROOT / dataset
         manifest_path = self.root / "splits.json"
@@ -141,6 +237,12 @@ class DWSProcessedDataset(Dataset):
         state = getattr(data, self.representation)
 
         weights, biases = state_to_tensors(state)
+
+        if self.augmentation:
+            weights, biases = augment_tensors(
+                weights,
+                biases,
+            )
 
         if self.statistics is not None:
             weights, biases = normalize_tensors(
