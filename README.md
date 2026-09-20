@@ -68,6 +68,7 @@ python scripts/run_modelnet_covering.py --dataset 40
 python scripts/run_rotated_mnist.py --model cnn
 python scripts/run_rotated_mnist.py --model average
 python scripts/run_rotated_mnist.py --model learned_can
+python scripts/run_rotated_mnist.py --model frozen_can
 ```
 
 Each experiment is run over 5 random seeds.
