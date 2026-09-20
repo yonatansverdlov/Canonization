@@ -99,7 +99,7 @@ Each processed sample stores the same INR twice:
 
 The canonization proceeds sequentially from input to output. For each hidden layer, neurons are sorted lexicographically using the key `[incoming weights, bias, sorted outgoing weights]`. If this gives permutation (P_l), the rows of (W_l) and (b_l) are permuted and the same permutation is propagated to the columns of (W_{l+1}). The output layer is not sorted.
 
-The processed split is fixed to 55,000 train, 5,000 validation, and 10,000 test examples using split seed `0` by default.
+The processed split is 55,000 train, 5,000 validation, and 10,000 test examples. MNIST uses split seed `0` by default; Fashion-MNIST uses the authors' bundled `splits.json`.
 
 ## Reproducibility
 
