@@ -75,7 +75,7 @@ def find_learned_checkpoint() -> str:
         / "trained_models"
         / "learned_can_seed_0_checkpoints"
     )
-    checkpoints = sorted(checkpoint_dir.glob("best-learned_can-seed-0*.ckpt"))
+    checkpoints = list(checkpoint_dir.glob("best-learned_can-seed-0*.ckpt"))
 
     if not checkpoints:
         raise FileNotFoundError(
@@ -83,7 +83,8 @@ def find_learned_checkpoint() -> str:
             "Run: python scripts/run_rotated_mnist.py --model learned_can"
         )
 
-    return str(checkpoints[0])
+    newest = max(checkpoints, key=lambda path: path.stat().st_mtime)
+    return str(newest)
 
 
 def build_learned_canonization_model(
