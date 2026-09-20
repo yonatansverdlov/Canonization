@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split, Subset
+from torch.utils.data import DataLoader
 
 from utils.data import OrderedModelNet40
 from utils.models import (
@@ -306,8 +306,6 @@ def run_once(args):
     criterion = nn.NLLLoss()
 
     final_train_acc = float("nan")
-    best_train_loss = float("inf")
-    epochs_without_improvement = 0
 
     for epoch in range(1, args.epochs + 1):
         tr_loss, tr_acc = train_one_epoch(
@@ -319,29 +317,12 @@ def run_once(args):
         )
         final_train_acc = tr_acc
 
-        if tr_loss < best_train_loss - args.early_stop_min_delta:
-            best_train_loss = tr_loss
-            epochs_without_improvement = 0
-        else:
-            epochs_without_improvement += 1
-
         print(
             f"Epoch {epoch:03d} | "
             f"Train Loss: {tr_loss:.4f} | Train Acc: {tr_acc:.4f}"
         )
 
-        if (
-            args.early_stop_patience > 0
-            and epochs_without_improvement >= args.early_stop_patience
-        ):
-            print(
-                f"Early stopping at epoch {epoch}: "
-                f"no train-loss improvement for "
-                f"{args.early_stop_patience} epochs."
-            )
-            break
-
-    completed_epochs = epoch
+    completed_epochs = args.epochs
 
     torch.save(
         {
@@ -434,18 +415,6 @@ def main():
     # Core shared defaults
     parser.add_argument("--model", type=str, default="PurePCA", choices=["PurePCA", "FrameAveraging", "Skewness", "RandomFrame"])
     parser.add_argument("--epochs", type=int, default=1600)
-    parser.add_argument(
-        "--early_stop_patience",
-        type=int,
-        default=200,
-        help="Stop if train loss does not improve for this many epochs. Set 0 to disable.",
-    )
-    parser.add_argument(
-        "--early_stop_min_delta",
-        type=float,
-        default=1e-4,
-        help="Minimum train-loss improvement required to reset early stopping.",
-    )
     parser.add_argument("--exp_name", type=str, default="PurePCA_SeedStudy_1600")
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--test_batch_size", type=int, default=16)
