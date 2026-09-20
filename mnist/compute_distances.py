@@ -1,9 +1,26 @@
 import argparse
+import os
+import random
 from pathlib import Path
 from typing import Dict, List
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+import numpy as np
 import torch
 from utils.data_funcs import get_dataset, obtain
 from utils.models import CNp4CNN
+
+
+def set_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True)
 
 
 @torch.no_grad()
@@ -169,6 +186,7 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
     device: str | None = None,
     reduce_mode: str = "average",
     learned_checkpoint: str | None = None,
+    seed: int = 0,
 ) -> Dict[str, float]:
     """
     For each evaluation sample x, computes four coverage distances:
@@ -188,6 +206,7 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
     if reduce_mode not in {"average", "max"}:
         raise ValueError("reduce_mode must be 'average' or 'max'")
 
+    set_seed(seed)
     device = device or ("cuda" if torch.cuda.is_available() else "cpu")
 
     train_images = train_dataset.tensors[0].float().contiguous()
@@ -211,7 +230,7 @@ def compute_rotated_mnist_nn_scores_from_training_loader(
 
     frozen_model = build_frozen_canonization_model(
         device=device,
-        seed=0,
+        seed=seed,
     )
 
     train_can_learned = None
@@ -382,6 +401,13 @@ def parse_args():
         help="Optional learned_can checkpoint. Defaults to seed 0 best checkpoint.",
     )
 
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed for deterministic distance computation and frozen canonizer.",
+    )
+
     return parser.parse_args()
 
 
@@ -400,6 +426,7 @@ if __name__ == "__main__":
         device=None,
         reduce_mode=args.reduce_mode,
         learned_checkpoint=args.learned_checkpoint,
+        seed=args.seed,
     )
 
     print()
