@@ -24,6 +24,11 @@ def main():
         choices=["average", "max"],
         default="average",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+    )
     args = parser.parse_args()
 
     cmd = [
@@ -33,6 +38,8 @@ def main():
         args.split,
         "--reduce_mode",
         args.reduce,
+        "--seed",
+        str(args.seed),
     ]
 
     print("$", " ".join(cmd))
