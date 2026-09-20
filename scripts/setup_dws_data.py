@@ -115,7 +115,11 @@ def extract_zip_with_progress(archive: Path, destination: Path) -> None:
 
 
 def source_ready(source_root: Path) -> bool:
-    return source_root.is_dir() and any(source_root.rglob("*.pth"))
+    if not source_root.is_dir():
+        return False
+
+    count = sum(1 for _ in source_root.rglob("*.pth"))
+    return count == 70000
 
 
 def ensure_source_dataset(dataset: str) -> Path:
@@ -395,6 +399,12 @@ def build_geometric_dataset(
         ):
             destination = out_dir / f"{index:05d}.pt"
 
+            if destination.exists() and not overwrite and verified >= verify:
+                manifest["splits"][split_name].append(
+                    str(destination.relative_to(processed_root))
+                )
+                continue
+
             state = load_state_dict(item["path"])
             canonical = canonicalize_state_dict(state)
 
@@ -417,6 +427,12 @@ def build_geometric_dataset(
                     )
 
                 verified += 1
+
+            if destination.exists() and not overwrite:
+                manifest["splits"][split_name].append(
+                    str(destination.relative_to(processed_root))
+                )
+                continue
 
             data = Data(
                 raw=clone_state_to_cpu(state),
