@@ -8,6 +8,7 @@ from utils.data_funcs import obtain, get_dataset
 from torch.utils.data import DataLoader
 from utils.models import AverageCNN, CNp4CNN, CNN
 from argparse import ArgumentParser
+from pathlib import Path
 
 def get_hyperparams():
     parser = ArgumentParser()
@@ -170,12 +171,12 @@ def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size
 
 
 if __name__ == "__main__":
-    data_path = "data/rotated_mnist"
-    obtain(data_path)
+    data_path = Path(__file__).resolve().parent / "data" / "rotated_mnist"
+    obtain(str(data_path))
 
-    train_dataset = get_dataset(data_path, split="train")
-    val_dataset = get_dataset(data_path, split="valid")
-    test_dataset = get_dataset(data_path, split="test")
+    train_dataset = get_dataset(str(data_path), split="train")
+    val_dataset = get_dataset(str(data_path), split="valid")
+    test_dataset = get_dataset(str(data_path), split="test")
 
 
     # choose one:
