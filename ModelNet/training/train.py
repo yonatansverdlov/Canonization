@@ -9,6 +9,9 @@ import json
 import shutil
 import argparse
 import copy
+import random
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from typing import Dict, Any
 
 import numpy as np
@@ -30,6 +33,25 @@ from torchmetrics.classification import MulticlassAccuracy
 from utils.data import OrderedModelNet40
 from utils.models import GlobalMLPClassifier, PointTransformerClassifier
 from utils.util import IOStream
+
+
+def set_seed(seed: int) -> None:
+    L.seed_everything(seed, workers=True)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+
+def worker_init_fn(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
 
 
 def str2bool(v):
@@ -179,10 +201,12 @@ class ModelNetDataModule(L.LightningDataModule):
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             persistent_workers=self.args.num_workers > 0,
+            worker_init_fn=worker_init_fn if self.args.num_workers > 0 else None,
             generator=generator,
         )
 
     def test_dataloader(self):
+        generator = torch.Generator().manual_seed(self.args.seed + 100000)
         return DataLoader(
             OrderedModelNet40(
                 partition="test",
@@ -202,6 +226,8 @@ class ModelNetDataModule(L.LightningDataModule):
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             persistent_workers=self.args.num_workers > 0,
+            worker_init_fn=worker_init_fn if self.args.num_workers > 0 else None,
+            generator=generator,
         )
 
 
@@ -533,7 +559,7 @@ def run_train_multiple_seeds(args, io):
         seed_io = IOStream(
             os.path.join("checkpoints", run_args.exp_name, "run.log")
         )
-        L.seed_everything(run_args.seed, workers=True)
+        set_seed(run_args.seed)
 
         result = run_train(run_args, seed_io)
         all_results.append(result)
@@ -583,6 +609,7 @@ def run_test(args, io):
     trainer = L.Trainer(
         accelerator=accelerator,
         devices=devices,
+        deterministic=True,
         logger=False,
         enable_checkpointing=False,
         enable_progress_bar=True,
@@ -719,7 +746,7 @@ if __name__ == "__main__":
 
     args.cuda = not args.no_cuda and torch.cuda.is_available()
 
-    L.seed_everything(args.seed, workers=True)
+    set_seed(args.seed)
 
     if args.cuda:
         io.cprint(f"Using GPU with devices={args.devices}")
