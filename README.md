@@ -79,4 +79,4 @@ Each experiment is run over 5 random seeds.
 python scripts/run_rotated_mnist_distances.py
 ```
 
-The experiment reports `l2`, `group`, and `can_frozen`; `can_learned` is also reported when a learned canonization checkpoint is available.
+The experiment reports `l2`, `group`, and `can_frozen`; `can_learned` is also reported when a learned canonization checkpoint is available. The distance computation uses seed `0` by default.
