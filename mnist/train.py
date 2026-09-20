@@ -1,5 +1,10 @@
 from statistics import mean, stdev
+import os
+import random
 
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+import numpy as np
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -9,6 +14,25 @@ from torch.utils.data import DataLoader
 from utils.models import AverageCNN, CNp4CNN, CNN
 from argparse import ArgumentParser
 from pathlib import Path
+
+
+def set_seed(seed: int) -> None:
+    pl.seed_everything(seed, workers=True)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+
+def worker_init_fn(worker_id: int) -> None:
+    worker_seed = torch.initial_seed() % 2**32
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
+    torch.manual_seed(worker_seed)
+
 
 def get_hyperparams():
     parser = ArgumentParser()
@@ -88,41 +112,51 @@ class MNISTModel(pl.LightningModule):
 
 
 class DatasetDataModule(pl.LightningDataModule):
-    def __init__(self, train_dataset, val_dataset, test_dataset, batch_size=256, num_workers=4):
+    def __init__(self, train_dataset, val_dataset, test_dataset, batch_size=256, num_workers=4, seed=0):
         super().__init__()
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.test_dataset = test_dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.seed = seed
 
     def train_dataloader(self):
+        generator = torch.Generator().manual_seed(self.seed)
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn if self.num_workers > 0 else None,
+            generator=generator,
         )
 
     def val_dataloader(self):
+        generator = torch.Generator().manual_seed(self.seed + 100000)
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn if self.num_workers > 0 else None,
+            generator=generator,
         )
 
     def test_dataloader(self):
+        generator = torch.Generator().manual_seed(self.seed + 200000)
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
+            worker_init_fn=worker_init_fn if self.num_workers > 0 else None,
+            generator=generator,
         )
 
 
 def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size=256, model_type="canonized"):
-    pl.seed_everything(seed, workers=True)
+    set_seed(seed)
 
     datamodule = DatasetDataModule(
         train_dataset=train_dataset,
@@ -130,6 +164,7 @@ def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size
         test_dataset=test_dataset,
         batch_size=batch_size,
         num_workers=4,
+        seed=seed,
     )
 
     model = MNISTModel(lr=lr, model_type=model_type)
@@ -154,6 +189,7 @@ def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size
     trainer = pl.Trainer(
         max_epochs=100,
         accelerator="auto",
+        deterministic=True,
         callbacks=[checkpoint_callback, early_stopping],
         check_val_every_n_epoch=10,
         limit_val_batches=100,
