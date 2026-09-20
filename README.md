@@ -14,6 +14,7 @@ This repository contains the experiments for studying canonization and invariant
   - [ModelNet](#modelnet)
     - [Data Setup](#data-setup)
     - [Covering Number Experiment](#covering-number-experiment)
+  - [Rotated MNIST](#rotated-mnist)
 
 ## Installation
 
@@ -57,4 +58,22 @@ Run the experiment on ModelNet40:
 
 ```bash
 python scripts/run_modelnet_covering.py --dataset 40
+```
+
+## Rotated MNIST
+
+### Training
+
+```bash
+python scripts/run_rotated_mnist.py --model cnn
+python scripts/run_rotated_mnist.py --model average
+python scripts/run_rotated_mnist.py --model learned_can
+```
+
+Each experiment is run over 5 random seeds.
+
+### Distance Computation
+
+```bash
+python scripts/run_rotated_mnist_distances.py
 ```
