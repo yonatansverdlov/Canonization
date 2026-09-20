@@ -4,6 +4,7 @@ import zipfile
 import urllib.request as url_req
 import numpy as np
 import torch
+from tqdm import tqdm
 
 def obtain(dir_path):
     os.makedirs(dir_path, exist_ok=True)
@@ -14,37 +15,74 @@ def obtain(dir_path):
     test_path = os.path.join(dir_path, "mnist_rotated_test.amat")
 
     if all(os.path.exists(p) for p in [train_path, valid_path, test_path]):
-        print("Dataset already exists")
+        print("Rotated MNIST already exists; skipping download.")
         return
 
-    print("Downloading the dataset")
-    url_req.urlretrieve(
-        "http://www.iro.umontreal.ca/~lisa/icml2007data/mnist_rotation_new.zip",
-        zip_path,
+    url = (
+        "http://www.iro.umontreal.ca/~lisa/icml2007data/"
+        "mnist_rotation_new.zip"
     )
 
-    print("Extracting the dataset")
+    if not os.path.exists(zip_path):
+        print("Downloading Rotated MNIST...")
+
+        progress = tqdm(
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            desc="mnist_rotation_new.zip",
+        )
+
+        def reporthook(block_num, block_size, total_size):
+            if total_size > 0 and progress.total is None:
+                progress.total = total_size
+            downloaded = block_num * block_size
+            progress.update(max(0, downloaded - progress.n))
+
+        try:
+            url_req.urlretrieve(url, zip_path, reporthook=reporthook)
+        finally:
+            progress.close()
+    else:
+        print("Archive already exists; skipping download.")
+
+    print("Extracting Rotated MNIST...")
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(dir_path)
 
-    os.rename(
-        os.path.join(dir_path, "mnist_all_rotation_normalized_float_train_valid.amat"),
-        train_path,
+    source_train_valid = os.path.join(
+        dir_path,
+        "mnist_all_rotation_normalized_float_train_valid.amat",
     )
-    os.rename(
-        os.path.join(dir_path, "mnist_all_rotation_normalized_float_test.amat"),
-        test_path,
+    source_test = os.path.join(
+        dir_path,
+        "mnist_all_rotation_normalized_float_test.amat",
     )
 
-    with open(train_path, "r") as f:
-        lines = f.readlines()
+    if os.path.exists(source_test):
+        os.replace(source_test, test_path)
 
-    with open(train_path, "w") as f_train, open(valid_path, "w") as f_valid:
-        f_train.writelines(lines[:10000])
-        f_valid.writelines(lines[10000:])
+    if os.path.exists(source_train_valid):
+        with open(source_train_valid, "r") as f:
+            lines = f.readlines()
 
-    os.remove(zip_path)
-    print("Done")
+        with open(train_path, "w") as f_train:
+            f_train.writelines(lines[:10000])
+
+        with open(valid_path, "w") as f_valid:
+            f_valid.writelines(lines[10000:])
+
+        os.remove(source_train_valid)
+
+    if not all(os.path.exists(p) for p in [train_path, valid_path, test_path]):
+        raise RuntimeError(
+            "Rotated MNIST setup did not produce all expected split files."
+        )
+
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+
+    print("Rotated MNIST setup complete.")
 
 
 def custom_load_data(file_path):
