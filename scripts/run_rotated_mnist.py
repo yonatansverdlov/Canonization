@@ -16,7 +16,7 @@ def main():
     )
     parser.add_argument(
         "--model",
-        choices=["cnn", "average", "learned_can"],
+        choices=["cnn", "average", "learned_can", "frozen_can"],
         required=True,
     )
     args = parser.parse_args()
