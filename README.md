@@ -15,6 +15,7 @@ This repository contains the experiments for studying canonization and invariant
     - [Data Setup](#data-setup)
     - [Covering Number Experiment](#covering-number-experiment)
   - [Rotated MNIST](#rotated-mnist)
+  - [Deep Weight Spaces](#deep-weight-spaces)
 
 ## Installation
 
@@ -80,6 +81,25 @@ python scripts/run_rotated_mnist_distances.py
 ```
 
 The experiment reports `l2`, `group`, and `can_frozen`; `can_learned` is also reported when a learned canonization checkpoint is available. The distance computation uses seed `0` by default.
+
+## Deep Weight Spaces
+
+### Data Setup
+
+Download the original DWS MNIST-INR and Fashion-MNIST-INR datasets and convert them to PyG `Data` objects:
+
+```bash
+python scripts/setup_dws_data.py
+```
+
+Each processed sample stores the same INR twice:
+
+- `raw`: the original PyTorch state dict.
+- `canon`: the canonized state dict.
+
+The canonization proceeds sequentially from input to output. For each hidden layer, neurons are sorted lexicographically using the key `[incoming weights, bias, sorted outgoing weights]`. If this gives permutation (P_l), the rows of (W_l) and (b_l) are permuted and the same permutation is propagated to the columns of (W_{l+1}). The output layer is not sorted.
+
+The processed split is fixed to 55,000 train, 5,000 validation, and 10,000 test examples using split seed `0` by default.
 
 ## Reproducibility
 
