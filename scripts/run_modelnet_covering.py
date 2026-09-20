@@ -39,6 +39,18 @@ def parse_args():
         action="store_true",
         help="Rebuild the cached point clouds even if they already exist.",
     )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=0,
+        help="Seed used for deterministic point sampling.",
+    )
+    parser.add_argument(
+        "--device",
+        choices=["auto", "cpu", "cuda"],
+        default="auto",
+        help="Device used for distance computation.",
+    )
     return parser.parse_args()
 
 
@@ -74,6 +86,8 @@ def main():
                 args.dataset,
                 "--P",
                 str(args.points),
+                "--seed",
+                str(args.seed),
             ],
             DATA_CREATION_DIR,
         )
@@ -91,6 +105,8 @@ def main():
             str(args.points),
             "--dataset_reduce",
             args.reduce,
+            "--device",
+            args.device,
         ],
         DISTANCE_DIR,
     )
