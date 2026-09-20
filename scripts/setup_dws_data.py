@@ -302,12 +302,13 @@ def processed_dataset_complete(
         if len(paths) != count:
             return False
 
-        if paths:
-            first = processed_root / paths[0]
-            last = processed_root / paths[-1]
+        split_dir = processed_root / split_name
+        if not split_dir.is_dir():
+            return False
 
-            if not first.exists() or not last.exists():
-                return False
+        file_count = sum(1 for _ in split_dir.glob("*.pt"))
+        if file_count != count:
+            return False
 
     return True
 
