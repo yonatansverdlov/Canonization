@@ -199,13 +199,12 @@ if __name__ == "__main__":
             model_type=MODEL_TYPE,
         )
         results.append(result)
-        print(result)
 
     test_accs = [r["test_acc"] for r in results]
 
-    print("\n===== Summary =====")
-    print("Model type:", MODEL_TYPE)
-    print("All test_accs:", test_accs)
-    print("Mean test_acc:", mean(test_accs))
-    if len(seeds) > 1:
-        print("Std test_acc:", stdev(test_accs))
+    print()
+    print("Dataset: Rotated MNIST")
+    print(f"Model: {MODEL_TYPE}")
+    print(f"Mean test accuracy: {mean(test_accs):.6f}")
+    std_test_acc = stdev(test_accs) if len(seeds) > 1 else 0.0
+    print(f"Std test accuracy: {std_test_acc:.6f}")
