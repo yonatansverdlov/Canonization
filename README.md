@@ -16,6 +16,8 @@ This repository contains the experiments for studying canonization and invariant
     - [Covering Number Experiment](#covering-number-experiment)
   - [Rotated MNIST](#rotated-mnist)
   - [Deep Weight Spaces](#deep-weight-spaces)
+  - [Citation](#citation)
+  - [Contact](#contact)
 
 ## Installation
 
@@ -112,3 +114,16 @@ python scripts/run_dws.py --dataset fmnist --model dwsnet
 
 Seeded experiments use deterministic Python, NumPy, PyTorch, CUDA, and DataLoader settings where supported. Rotated MNIST `learned_can` is not guaranteed to be bitwise deterministic on CUDA because its Kornia rotation uses CUDA `grid_sample` backward.
 
+## Citation
+
+If you find this code useful, please cite the accompanying paper:
+
+**When and How to Canonize: a Generalization Perspective**
+
+## Contact
+
+For questions, feedback, or collaboration opportunities, feel free to reach out:
+
+📧 **Email:** [yonatans@campus.technion.ac.il](mailto:yonatans@campus.technion.ac.il)
+
+If you encounter issues or have suggestions, please open an issue on the [GitHub repository](https://github.com/yonatansverdlov/Canonization).
