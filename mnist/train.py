@@ -17,7 +17,7 @@ def get_hyperparams():
         "--model_type",
         type=str,
         default="average",
-        choices=["average", "learned_can","cnn"],
+        choices=["average", "learned_can", "frozen_can", "cnn"],
         help="which model to run",
     )
     parser.add_argument(
@@ -41,8 +41,10 @@ class MNISTModel(pl.LightningModule):
             self.model = CNN(self.im_shape, out_channels=32, num_layers=6)
         elif model_type == "average":
             self.model = AverageCNN()
-        elif model_type == 'learned_can': 
-            self.model = CNp4CNN()
+        elif model_type == "learned_can":
+            self.model = CNp4CNN(freeze_canonization=False)
+        elif model_type == "frozen_can":
+            self.model = CNp4CNN(freeze_canonization=True)
         else:
             raise ValueError(f"Unknown model_type: {model_type}")
 
