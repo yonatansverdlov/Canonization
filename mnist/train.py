@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 
-def set_seed(seed: int) -> None:
+def set_seed(seed: int, strict: bool = True) -> None:
     pl.seed_everything(seed, workers=True)
     random.seed(seed)
     np.random.seed(seed)
@@ -24,7 +24,7 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.use_deterministic_algorithms(True, warn_only=not strict)
 
 
 def worker_init_fn(worker_id: int) -> None:
@@ -156,7 +156,14 @@ class DatasetDataModule(pl.LightningDataModule):
 
 
 def run_seed(seed, train_dataset, val_dataset, test_dataset, lr=1e-3, batch_size=256, model_type="canonized"):
-    set_seed(seed)
+    strict_determinism = model_type != "learned_can"
+    set_seed(seed, strict=strict_determinism)
+
+    if model_type == "learned_can" and torch.cuda.is_available():
+        print(
+            "WARNING: learned_can uses CUDA grid_sample backward via Kornia; "
+            "PyTorch does not guarantee bitwise deterministic gradients for this operation."
+        )
 
     datamodule = DatasetDataModule(
         train_dataset=train_dataset,
