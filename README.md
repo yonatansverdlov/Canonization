@@ -78,3 +78,5 @@ Each experiment is run over 5 random seeds.
 ```bash
 python scripts/run_rotated_mnist_distances.py
 ```
+
+The experiment reports four distances: `l2`, `group`, `can_learned`, and `can_frozen`.
