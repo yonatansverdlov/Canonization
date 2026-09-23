@@ -100,67 +100,138 @@ def download_with_progress(url: str, destination: Path) -> None:
     partial.replace(destination)
 
 
+def _zip_member_is_junk(name: str) -> bool:
+    """Ignore macOS resource forks and unsafe/irrelevant ZIP members."""
+    parts = Path(name).parts
+    return (
+        name.startswith("/")
+        or ".." in parts
+        or "__MACOSX" in parts
+        or any(part.startswith("._") for part in parts)
+    )
+
+
 def extract_zip_with_progress(archive: Path, destination: Path) -> None:
+    """Resume a partial extraction; never delete already extracted files."""
     destination.mkdir(parents=True, exist_ok=True)
+    extracted = skipped = 0
 
     with zipfile.ZipFile(archive, "r") as zf:
-        members = zf.infolist()
-
         for member in tqdm(
-            members,
-            desc=f"Extracting {archive.name}",
-            unit="file",
+            zf.infolist(), desc=f"Extracting {archive.name}", unit="file"
         ):
+            if member.is_dir() or _zip_member_is_junk(member.filename):
+                continue
+
+            target = destination / member.filename
+            if target.is_file() and target.stat().st_size == member.file_size:
+                skipped += 1
+                continue
+
             zf.extract(member, destination)
+            extracted += 1
+
+    print(f"Extraction finished: {extracted} files extracted, {skipped} reused.")
+
+
+def mnist_model_paths(dataset_root: Path) -> list[Path]:
+    """Only enumerate original DWS mnist_png_* checkpoints, not ZIP sidecars."""
+    groups = sorted(
+        path for path in dataset_root.glob("mnist_png_*") if path.is_dir()
+    )
+    return sorted(
+        path
+        for group in groups
+        for path in group.rglob("*.pth")
+        if not _zip_member_is_junk(path.relative_to(dataset_root).as_posix())
+        and path.name != "statistics.pth"
+    )
+
+
+def _mnist_split_counts(paths: list[Path], root: Path) -> tuple[int, int]:
+    train_count = sum(
+        "train" in path.relative_to(root).as_posix().lower()
+        for path in paths
+    )
+    return train_count, len(paths) - train_count
 
 
 def find_source_dataset_root(source_root: Path, dataset: str):
-    """
-    Return the directory that directly contains the source dataset.
-
-    FMNIST ships inside an extra fmnist_inrs/ directory and includes
-    statistics.pth in addition to the 70,000 model checkpoints.
-    """
+    """Locate a complete dataset, including ZIPs with an extra wrapper dir."""
     if not source_root.is_dir():
         return None
 
     if dataset == "fmnist":
-        candidates = [source_root] + [
-            path.parent for path in source_root.rglob("splits.json")
-        ]
-
+        candidates = [source_root] + sorted({
+            p.parent
+            for p in source_root.rglob("splits.json")
+            if not _zip_member_is_junk(p.relative_to(source_root).as_posix())
+        })
         for candidate in candidates:
             train_dir = candidate / "train"
             test_dir = candidate / "test"
-            split_path = candidate / "splits.json"
-
             if not (
-                train_dir.is_dir()
+                (candidate / "splits.json").is_file()
+                and train_dir.is_dir()
                 and test_dir.is_dir()
-                and split_path.exists()
             ):
                 continue
-
-            model_count = (
-                sum(1 for _ in train_dir.glob("model_*.pth"))
-                + sum(1 for _ in test_dir.glob("model_*.pth"))
-            )
-
-            if model_count == 70000:
+            if (
+                sum(1 for _ in train_dir.glob("model_*.pth")) == 60000
+                and sum(1 for _ in test_dir.glob("model_*.pth")) == 10000
+            ):
                 return candidate
-
         return None
 
-    model_files = [
-        path
-        for path in source_root.rglob("*.pth")
-        if path.name != "statistics.pth"
-    ]
-
-    if len(model_files) == 70000:
-        return source_root
-
+    candidates = sorted({
+        group.parent
+        for group in source_root.rglob("mnist_png_*")
+        if group.is_dir()
+        and not _zip_member_is_junk(
+            group.relative_to(source_root).as_posix()
+        )
+    })
+    for candidate in candidates:
+        files = mnist_model_paths(candidate)
+        if _mnist_split_counts(files, candidate) == (60000, 10000):
+            return candidate
     return None
+
+
+def source_diagnostic(source_root: Path, dataset: str) -> str:
+    """Describe an incomplete extraction instead of issuing a bare error."""
+    if dataset == "mnist":
+        all_pth = [
+            p for p in source_root.rglob("*.pth")
+            if not _zip_member_is_junk(
+                p.relative_to(source_root).as_posix()
+            )
+        ]
+        groups = [
+            p for p in source_root.rglob("mnist_png_*") if p.is_dir()
+        ]
+        group_counts = [
+            (str(g.parent.relative_to(source_root)), len(mnist_model_paths(g.parent)))
+            for g in groups[:1]
+        ]
+        return (
+            f"{len(all_pth)} non-metadata .pth files found; "
+            f"example: {[str(p.relative_to(source_root)) for p in all_pth[:3]]}; "
+            f"mnist_png_* groups: {len(groups)}; "
+            f"group counts: {group_counts}. "
+            "Expected 60000 train and 10000 test checkpoints."
+        )
+
+    splits = [
+        p.relative_to(source_root).as_posix()
+        for p in source_root.rglob("splits.json")
+        if not _zip_member_is_junk(p.relative_to(source_root).as_posix())
+    ]
+    model_count = sum(1 for _ in source_root.rglob("model_*.pth"))
+    return (
+        f"Found {model_count} model_*.pth files and splits at {splits[:3]}. "
+        "Expected 60000 train, 10000 test and splits.json."
+    )
 
 
 def source_ready(source_root: Path, dataset: str) -> bool:
@@ -177,41 +248,37 @@ def ensure_source_dataset(dataset: str) -> Path:
 
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is not None:
+        archive.unlink(missing_ok=True)
         print(f"[{dataset}] Source already available: {dataset_root}")
         return dataset_root
 
     if archive.exists() and not zipfile.is_zipfile(archive):
-        print(f"[{dataset}] Corrupted archive found; deleting it.")
+        print(f"[{dataset}] Incomplete/corrupt archive; keeping extracted files.")
         archive.unlink()
 
     if not archive.exists():
         download_with_progress(cfg["url"], archive)
     else:
-        print(f"[{dataset}] Archive already exists: {archive}")
+        print(f"[{dataset}] Reusing archive: {archive}")
 
     if not zipfile.is_zipfile(archive):
-        archive.unlink(missing_ok=True)
         raise RuntimeError(
-            f"Downloaded archive is not a valid ZIP: {archive}"
+            f"Downloaded archive is not a valid ZIP: {archive}. "
+            "Any previously extracted files were preserved."
         )
 
-    if source_root.exists():
-        shutil.rmtree(source_root)
-
-    extract_zip_with_progress(
-        archive=archive,
-        destination=source_root,
-    )
+    # Resume an incomplete extraction rather than deleting its entire tree.
+    extract_zip_with_progress(archive, source_root)
 
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is None:
         raise RuntimeError(
-            f"Could not locate a complete {dataset} INR dataset after "
-            f"extraction in {source_root}"
+            f"Could not find complete {dataset} INRs after extraction: "
+            f"{source_diagnostic(source_root, dataset)} "
+            f"Files and archive were preserved in {source_root} and {archive}."
         )
 
     archive.unlink(missing_ok=True)
-
     print(f"[{dataset}] Source ready: {dataset_root}")
     return dataset_root
 
@@ -303,21 +370,16 @@ def discover_source_split(source_root: Path):
     train = []
     test = []
 
-    for path in sorted(source_root.rglob("*.pth")):
-        item = {
-            "path": path,
-            "label": infer_label(path),
-        }
-
-        if "train" in path.as_posix().lower():
+    for path in mnist_model_paths(source_root):
+        item = {"path": path, "label": infer_label(path)}
+        if "train" in path.relative_to(source_root).as_posix().lower():
             train.append(item)
         else:
             test.append(item)
 
     if len(train) != 60000 or len(test) != 10000:
         raise RuntimeError(
-            "Expected the original DWS MNIST/FMNIST INR split to contain "
-            f"60000 train and 10000 test INRs, found "
+            "Expected 60000 train and 10000 test MNIST INRs, found "
             f"{len(train)} train and {len(test)} test."
         )
 
@@ -644,21 +706,50 @@ def main():
     args = parse_args()
 
     datasets = (
-        ["mnist", "fmnist"]
-        if args.dataset == "all"
+        ["mnist", "fmnist"] if args.dataset == "all"
         else [args.dataset]
     )
+    failures = []
 
     for dataset in datasets:
-        source_root = ensure_source_dataset(dataset)
+        try:
+            processed_root = PROCESSED_ROOT / dataset
+            if not args.overwrite and processed_dataset_complete(
+                processed_root, processed_root / "splits.json"
+            ):
+                print(f"[{dataset}] Processed dataset already complete; skipping.")
+                continue
 
-        build_geometric_dataset(
-            dataset=dataset,
-            source_root=source_root,
-            split_seed=args.split_seed,
-            verify=args.verify,
-            overwrite=args.overwrite,
-        )
+            source_root = ensure_source_dataset(dataset)
+            build_geometric_dataset(
+                dataset=dataset,
+                source_root=source_root,
+                split_seed=args.split_seed,
+                verify=args.verify,
+                overwrite=args.overwrite,
+            )
+        except Exception as exc:
+            # A problem with MNIST must not prevent FMNIST from downloading.
+            failures.append((dataset, exc))
+            print(
+                f"\n[{dataset}] FAILED ({type(exc).__name__}): {exc}",
+                file=sys.stderr,
+            )
+            print(
+                f"[{dataset}] Existing downloads and extracted files retained.",
+                file=sys.stderr,
+            )
+
+    print("\n========== DWS DATA SETUP SUMMARY ==========")
+    for dataset in datasets:
+        failure = next((e for name, e in failures if name == dataset), None)
+        print(f"{dataset}: {'FAILED: ' + str(failure) if failure else 'OK'}")
+    print("============================================")
+
+    if failures:
+        raise SystemExit(1)
+
+
 
 
 if __name__ == "__main__":
