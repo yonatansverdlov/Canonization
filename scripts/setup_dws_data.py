@@ -3,6 +3,7 @@
 import argparse
 import copy
 import json
+import os
 import shutil
 import sys
 import zipfile
@@ -157,111 +158,129 @@ def archive_extraction_complete(archive: Path, destination: Path) -> bool:
 
 
 def _mnist_checkpoint_groups(source_root: Path):
-    """Discover exactly the MNIST model files in the original mixed ZIP.
+    """List the original MNIST checkpoints without recursively stat-ing the
+    entire mixed MNIST/CIFAR archive.
 
-    The downloaded mnist-inrs.zip also contains CIFAR10 models and metadata.
-    The actual MNIST layout, verified against the extracted archive, is:
+    The user's source tree is:
       mnist-inrs/mnist_png_training_<label>_<id>/checkpoints/model_final.pth
       mnist-inrs/mnist_png_testing_<label>_<id>/checkpoints/model_final.pth
-    Only these two directory types and this exact checkpoint are selected.
+
+    Count directory names here instead of checking 70k checkpoint files again.
+    The first and last checkpoints of each split are checked by the selector,
+    and each file is opened during conversion. Incomplete results aren't cached.
     """
     groups = {}
     candidate_dirs = 0
     rejected_dirs = 0
-
     if not source_root.is_dir():
         return groups, candidate_dirs, rejected_dirs
 
-    for model_dir in source_root.rglob("mnist_png_*"):
-        if not model_dir.is_dir():
-            continue
+    def scan_collection(collection_root: Path):
+        nonlocal candidate_dirs, rejected_dirs
+        group = {"train": [], "test": []}
+        # scandir reads direct children only, skipping all CIFAR subtrees.
+        with os.scandir(collection_root) as entries:
+            for entry in entries:
+                name = entry.name
+                if name.startswith("mnist_png_training_"):
+                    split = "train"
+                elif name.startswith("mnist_png_testing_"):
+                    split = "test"
+                else:
+                    continue
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                candidate_dirs += 1
+                parts = name.rsplit("_", 2)
+                try:
+                    label = int(parts[-2])
+                    if len(parts) != 3 or not parts[-1].isdigit():
+                        raise ValueError("invalid MNIST folder name")
+                except (ValueError, IndexError):
+                    rejected_dirs += 1
+                    continue
+                if not 0 <= label <= 9:
+                    rejected_dirs += 1
+                    continue
+                group[split].append(
+                    Path(entry.path) / "checkpoints" / "model_final.pth"
+                )
+        if group["train"] or group["test"]:
+            groups[collection_root] = group
 
-        name = model_dir.name
-        if name.startswith("mnist_png_training_"):
-            split_name = "train"
-        elif name.startswith("mnist_png_testing_"):
-            split_name = "test"
-        else:
-            continue
+    candidates = (source_root / "mnist-inrs", source_root)
+    for candidate in candidates:
+        if candidate.is_dir():
+            scan_collection(candidate)
+            group = groups.get(candidate, {})
+            if len(group.get("train", [])) == 60000 and len(group.get("test", [])) == 10000:
+                break
 
-        candidate_dirs += 1
-        relative_dir = model_dir.relative_to(source_root).as_posix()
-        if _zip_member_is_junk(relative_dir):
-            rejected_dirs += 1
-            continue
-
-        checkpoint = model_dir / "checkpoints" / "model_final.pth"
-        if not checkpoint.is_file():
-            rejected_dirs += 1
-            continue
-
-        try:
-            label = infer_label(checkpoint)
-        except RuntimeError:
-            rejected_dirs += 1
-            continue
-        if not 0 <= label <= 9:
-            rejected_dirs += 1
-            continue
-
-        collection_root = model_dir.parent
-        group = groups.setdefault(
-            collection_root, {"train": [], "test": []}
-        )
-        group[split_name].append(checkpoint)
+    # Preserve compatibility with ZIPs containing an extra wrapper folder;
+    # this slower fallback is never used for the known 70k-file layout.
+    if not any(
+        len(group["train"]) == 60000 and len(group["test"]) == 10000
+        for group in groups.values()
+    ):
+        for candidate in source_root.rglob("mnist-inrs"):
+            if not candidate.is_dir() or candidate in candidates or candidate in groups:
+                continue
+            if _zip_member_is_junk(candidate.relative_to(source_root).as_posix()):
+                continue
+            scan_collection(candidate)
+            group = groups.get(candidate, {})
+            if len(group.get("train", [])) == 60000 and len(group.get("test", [])) == 10000:
+                break
 
     return groups, candidate_dirs, rejected_dirs
 
 
 def _select_mnist_checkpoints(source_root: Path, verbose=False):
+    """Cache only complete MNIST discoveries for the duration of this run."""
     if not source_root.is_dir():
         return None
 
-    groups, total_pth, skipped_pth = _mnist_checkpoint_groups(
+    cache = getattr(_select_mnist_checkpoints, "_complete_cache", None)
+    if cache is not None and source_root in cache:
+        return cache[source_root]
+
+    groups, candidate_dirs, rejected_dirs = _mnist_checkpoint_groups(
         source_root
     )
-
     complete = [
-        (root, group)
-        for root, group in groups.items()
-        if len(group["train"]) == 60000
-        and len(group["test"]) == 10000
+        (root, group) for root, group in groups.items()
+        if len(group["train"]) == 60000 and len(group["test"]) == 10000
     ]
-    if complete:
-        # A genuine extraction is preferred over nested copies, if present.
-        complete.sort(key=lambda pair: (len(pair[0].parts), str(pair[0])))
-        root, group = complete[0]
-        return (
-            root,
-            sorted(group["train"]),
-            sorted(group["test"]),
-        )
+    complete.sort(key=lambda pair: (len(pair[0].parts), str(pair[0])))
+    for root, group in complete:
+        train, test = sorted(group["train"]), sorted(group["test"])
+        # Only four existence checks, not 70,000 repeated filesystem stats.
+        samples = [train[0], train[-1], test[0], test[-1]]
+        if not all(path.is_file() for path in samples):
+            if verbose:
+                print(f"[mnist] Missing sample checkpoint in {root}")
+            continue
+        result = (root, train, test)
+        if cache is None:
+            cache = {}
+            _select_mnist_checkpoints._complete_cache = cache
+        cache[source_root] = result
+        cache[root] = result  # build_split receives this nested root.
+        return result
 
     if verbose:
         print(
-            f"[mnist] Found {total_pth:,} MNIST model directories; "
-            f"{skipped_pth:,} lack the expected model_final.pth "
-            "or have invalid labels."
+            f"[mnist] Found {candidate_dirs:,} MNIST model directories; "
+            f"{rejected_dirs:,} invalid directory names."
         )
         for root, group in sorted(
             groups.items(),
-            key=lambda pair: -(
-                len(pair[1]["train"]) + len(pair[1]["test"])
-            ),
+            key=lambda pair: -(len(pair[1]["train"]) + len(pair[1]["test"])),
         )[:5]:
             print(
                 f"[mnist] Candidate {root}: "
-                f"train={len(group['train']):,}, "
-                f"test={len(group['test']):,}"
+                f"train={len(group['train']):,}, test={len(group['test']):,}"
             )
-            sample = (group["train"] or group["test"])
-            if sample:
-                print(f"[mnist] Example: {sample[0]}")
-        if not groups and total_pth:
-            examples = list(source_root.rglob("*.pth"))[:3]
-            for example in examples:
-                print(f"[mnist] Unrecognized .pth: {example}")
-
     return None
 
 
