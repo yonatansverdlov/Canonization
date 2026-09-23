@@ -157,60 +157,60 @@ def archive_extraction_complete(archive: Path, destination: Path) -> bool:
 
 
 def _mnist_checkpoint_groups(source_root: Path):
-    """
-    Find DWS MNIST checkpoints using the authors' mnist_png_*/**/*.pth
-    layout. An archive may also contain unrelated .pth files, so checking
-    the total number of .pth files in the extraction root is incorrect.
+    """Discover exactly the MNIST model files in the original mixed ZIP.
 
-    The key of each group is the directory containing mnist_png_* folders.
+    The downloaded mnist-inrs.zip also contains CIFAR10 models and metadata.
+    The actual MNIST layout, verified against the extracted archive, is:
+      mnist-inrs/mnist_png_training_<label>_<id>/checkpoints/model_final.pth
+      mnist-inrs/mnist_png_testing_<label>_<id>/checkpoints/model_final.pth
+    Only these two directory types and this exact checkpoint are selected.
     """
     groups = {}
-    total_pth = 0
-    skipped_pth = 0
+    candidate_dirs = 0
+    rejected_dirs = 0
 
-    for path in source_root.rglob("*.pth"):
-        if not path.is_file():
-            continue
-        total_pth += 1
+    if not source_root.is_dir():
+        return groups, candidate_dirs, rejected_dirs
 
-        relative_parts = path.relative_to(source_root).parts
-        if _zip_member_is_junk(path.relative_to(source_root).as_posix()):
-            skipped_pth += 1
+    for model_dir in source_root.rglob("mnist_png_*"):
+        if not model_dir.is_dir():
             continue
 
-        group_index = next(
-            (
-                i for i, part in enumerate(relative_parts[:-1])
-                if part.startswith("mnist_png_")
-            ),
-            None,
-        )
-        if group_index is None:
-            skipped_pth += 1
+        name = model_dir.name
+        if name.startswith("mnist_png_training_"):
+            split_name = "train"
+        elif name.startswith("mnist_png_testing_"):
+            split_name = "test"
+        else:
+            continue
+
+        candidate_dirs += 1
+        relative_dir = model_dir.relative_to(source_root).as_posix()
+        if _zip_member_is_junk(relative_dir):
+            rejected_dirs += 1
+            continue
+
+        checkpoint = model_dir / "checkpoints" / "model_final.pth"
+        if not checkpoint.is_file():
+            rejected_dirs += 1
             continue
 
         try:
-            label = infer_label(path)
+            label = infer_label(checkpoint)
         except RuntimeError:
-            skipped_pth += 1
+            rejected_dirs += 1
             continue
-
         if not 0 <= label <= 9:
-            skipped_pth += 1
+            rejected_dirs += 1
             continue
 
-        collection_root = source_root.joinpath(
-            *relative_parts[:group_index]
-        )
-        split_name = (
-            "train" if "train" in path.as_posix().lower() else "test"
-        )
+        collection_root = model_dir.parent
         group = groups.setdefault(
             collection_root, {"train": [], "test": []}
         )
-        group[split_name].append(path)
+        group[split_name].append(checkpoint)
 
-    return groups, total_pth, skipped_pth
+    return groups, candidate_dirs, rejected_dirs
 
 
 def _select_mnist_checkpoints(source_root: Path, verbose=False):
@@ -239,8 +239,8 @@ def _select_mnist_checkpoints(source_root: Path, verbose=False):
 
     if verbose:
         print(
-            f"[mnist] Discovered {total_pth:,} .pth files; "
-            f"{skipped_pth:,} are outside the original MNIST INR layout "
+            f"[mnist] Found {total_pth:,} MNIST model directories; "
+            f"{skipped_pth:,} lack the expected model_final.pth "
             "or have invalid labels."
         )
         for root, group in sorted(
@@ -396,8 +396,8 @@ def print_source_diagnostics(source_root: Path, dataset: str, archive: Path) -> 
     if dataset == "mnist":
         groups, total, skipped = _mnist_checkpoint_groups(source_root)
         print(
-            f"[mnist] Extracted .pth files: {total:,}; "
-            f"outside expected layout/invalid labels: {skipped:,}"
+            f"[mnist] MNIST model directories: {total:,}; "
+            f"missing checkpoints/invalid labels: {skipped:,}"
         )
         for root, group in sorted(
             groups.items(),
