@@ -101,6 +101,7 @@ def download_with_progress(url: str, destination: Path) -> None:
 
 
 def extract_zip_with_progress(archive: Path, destination: Path) -> None:
+    """Resume extraction without rewriting files that are already complete."""
     destination.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(archive, "r") as zf:
@@ -111,7 +112,31 @@ def extract_zip_with_progress(archive: Path, destination: Path) -> None:
             desc=f"Extracting {archive.name}",
             unit="file",
         ):
-            zf.extract(member, destination)
+            target = destination / member.filename
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif (
+                target.is_file()
+                and target.stat().st_size == member.file_size
+            ):
+                continue
+            else:
+                zf.extract(member, destination)
+
+
+def archive_extraction_complete(archive: Path, destination: Path) -> bool:
+    """Check ZIP contents against extracted file sizes before resuming."""
+    if not destination.is_dir():
+        return False
+
+    with zipfile.ZipFile(archive, "r") as zf:
+        return all(
+            (destination / member.filename).is_file()
+            and (destination / member.filename).stat().st_size
+            == member.file_size
+            for member in zf.infolist()
+            if not member.is_dir()
+        )
 
 
 def _mnist_checkpoint_groups(source_root: Path):
@@ -280,6 +305,8 @@ def ensure_source_dataset(dataset: str) -> Path:
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is not None:
         print(f"[{dataset}] Source already available: {dataset_root}")
+        # A previous interrupted run may have left the ZIP behind.
+        archive.unlink(missing_ok=True)
         return dataset_root
 
     if archive.exists() and not zipfile.is_zipfile(archive):
@@ -297,8 +324,19 @@ def ensure_source_dataset(dataset: str) -> Path:
             f"Downloaded archive is not a valid ZIP: {archive}"
         )
 
+    if archive_extraction_complete(archive, source_root):
+        # Do not delete or re-extract a complete 10-minute extraction if
+        # the archive has an unexpected layout: report the structure.
+        if dataset == "mnist":
+            _select_mnist_checkpoints(source_root, verbose=True)
+        raise RuntimeError(
+            f"The {dataset} archive is already fully extracted, but "
+            "its INR layout is unrecognized. Existing files were left "
+            f"untouched at {source_root}. See the report above."
+        )
+
     if source_root.exists():
-        shutil.rmtree(source_root)
+        print(f"[{dataset}] Resuming extraction into {source_root}")
 
     extract_zip_with_progress(
         archive=archive,
@@ -307,9 +345,11 @@ def ensure_source_dataset(dataset: str) -> Path:
 
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is None:
+        if dataset == "mnist":
+            _select_mnist_checkpoints(source_root, verbose=True)
         raise RuntimeError(
-            f"Could not locate a complete {dataset} INR dataset after "
-            f"extraction in {source_root}"
+            f"Could not locate the {dataset} INR dataset after extraction "
+            f"in {source_root}. Existing files were left untouched."
         )
 
     archive.unlink(missing_ok=True)
