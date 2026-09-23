@@ -1,0 +1,26 @@
+name: DWS data setup tests
+
+on:
+  push:
+    branches:
+      - fix/dws-mnist-source-detection
+  pull_request:
+    paths:
+      - scripts/setup_dws_data.py
+      - tests/test_dws_data_setup.py
+      - .github/workflows/dws-data-setup-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: python -m pip install pytest
+      - run: python -m pytest -q tests/test_dws_data_setup.py
