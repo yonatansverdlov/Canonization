@@ -100,42 +100,59 @@ def download_with_progress(url: str, destination: Path) -> None:
     partial.replace(destination)
 
 
+def _zip_member_is_junk(name: str) -> bool:
+    """Ignore ZIP metadata and refuse unsafe member paths."""
+    parts = Path(name).parts
+    return (
+        name.startswith("/")
+        or ".." in parts
+        or "__MACOSX" in parts
+        or any(part.startswith("._") for part in parts)
+    )
+
+
 def extract_zip_with_progress(archive: Path, destination: Path) -> None:
-    """Resume extraction without rewriting files that are already complete."""
+    """Resume extraction without deleting complete files."""
     destination.mkdir(parents=True, exist_ok=True)
+    extracted = 0
+    reused = 0
+    ignored = 0
 
     with zipfile.ZipFile(archive, "r") as zf:
-        members = zf.infolist()
-
         for member in tqdm(
-            members,
+            zf.infolist(),
             desc=f"Extracting {archive.name}",
             unit="file",
         ):
+            if _zip_member_is_junk(member.filename):
+                ignored += 1
+                continue
             target = destination / member.filename
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
-            elif (
-                target.is_file()
-                and target.stat().st_size == member.file_size
-            ):
                 continue
-            else:
-                zf.extract(member, destination)
+            if target.is_file() and target.stat().st_size == member.file_size:
+                reused += 1
+                continue
+            zf.extract(member, destination)
+            extracted += 1
+
+    print(
+        f"Extraction: {extracted:,} extracted, "
+        f"{reused:,} reused, {ignored:,} metadata/unsafe entries ignored."
+    )
 
 
 def archive_extraction_complete(archive: Path, destination: Path) -> bool:
-    """Check ZIP contents against extracted file sizes before resuming."""
+    """Check whether non-metadata ZIP files already exist at full size."""
     if not destination.is_dir():
         return False
-
     with zipfile.ZipFile(archive, "r") as zf:
         return all(
             (destination / member.filename).is_file()
-            and (destination / member.filename).stat().st_size
-            == member.file_size
+            and (destination / member.filename).stat().st_size == member.file_size
             for member in zf.infolist()
-            if not member.is_dir()
+            if not member.is_dir() and not _zip_member_is_junk(member.filename)
         )
 
 
@@ -157,7 +174,7 @@ def _mnist_checkpoint_groups(source_root: Path):
         total_pth += 1
 
         relative_parts = path.relative_to(source_root).parts
-        if path.name.startswith("._") or "__MACOSX" in relative_parts:
+        if _zip_member_is_junk(path.relative_to(source_root).as_posix()):
             skipped_pth += 1
             continue
 
@@ -295,6 +312,7 @@ def source_ready(source_root: Path, dataset: str) -> bool:
 
 
 def ensure_source_dataset(dataset: str) -> Path:
+    """Reuse an extracted dataset or resume safely, retaining ZIP on failure."""
     cfg = DATASETS[dataset]
     source_root = SOURCE_ROOT / dataset
     archive = DOWNLOAD_ROOT / cfg["archive"]
@@ -305,57 +323,108 @@ def ensure_source_dataset(dataset: str) -> Path:
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is not None:
         print(f"[{dataset}] Source already available: {dataset_root}")
-        # A previous interrupted run may have left the ZIP behind.
         archive.unlink(missing_ok=True)
         return dataset_root
 
+    if source_root.exists():
+        print(f"[{dataset}] Existing extraction detected: {source_root}")
+        print(f"[{dataset}] Preserving previously extracted data.")
+
     if archive.exists() and not zipfile.is_zipfile(archive):
-        print(f"[{dataset}] Corrupted archive found; deleting it.")
+        print(f"[{dataset}] Corrupted ZIP found; only the ZIP will be removed.")
         archive.unlink()
 
-    if not archive.exists():
-        download_with_progress(cfg["url"], archive)
+    if archive.exists():
+        print(f"[{dataset}] Reusing downloaded archive: {archive}")
     else:
-        print(f"[{dataset}] Archive already exists: {archive}")
+        print(f"[{dataset}] Archive missing. Downloading original dataset.")
+        download_with_progress(cfg["url"], archive)
 
     if not zipfile.is_zipfile(archive):
-        archive.unlink(missing_ok=True)
         raise RuntimeError(
-            f"Downloaded archive is not a valid ZIP: {archive}"
+            f"Downloaded archive is not a valid ZIP: {archive}. "
+            "Already extracted files were preserved."
         )
 
     if archive_extraction_complete(archive, source_root):
-        # Do not delete or re-extract a complete 10-minute extraction if
-        # the archive has an unexpected layout: report the structure.
-        if dataset == "mnist":
-            _select_mnist_checkpoints(source_root, verbose=True)
-        raise RuntimeError(
-            f"The {dataset} archive is already fully extracted, but "
-            "its INR layout is unrecognized. Existing files were left "
-            f"untouched at {source_root}. See the report above."
+        print(
+            f"[{dataset}] ZIP already completely extracted; "
+            "no files need to be extracted again."
         )
-
-    if source_root.exists():
-        print(f"[{dataset}] Resuming extraction into {source_root}")
-
-    extract_zip_with_progress(
-        archive=archive,
-        destination=source_root,
-    )
+    else:
+        print(f"[{dataset}] Extracting or resuming missing ZIP entries.")
+        extract_zip_with_progress(archive, source_root)
 
     dataset_root = find_source_dataset_root(source_root, dataset)
     if dataset_root is None:
-        if dataset == "mnist":
-            _select_mnist_checkpoints(source_root, verbose=True)
+        print_source_diagnostics(source_root, dataset, archive)
         raise RuntimeError(
-            f"Could not locate the {dataset} INR dataset after extraction "
-            f"in {source_root}. Existing files were left untouched."
+            f"Cannot recognize the {dataset} INR layout in {source_root}. "
+            "The extracted files AND downloaded ZIP have been preserved. "
+            f"Run: python scripts/setup_dws_data.py --dataset {dataset} "
+            "--inspect-source"
         )
 
     archive.unlink(missing_ok=True)
-
     print(f"[{dataset}] Source ready: {dataset_root}")
     return dataset_root
+
+
+def print_source_diagnostics(source_root: Path, dataset: str, archive: Path) -> None:
+    """Print enough evidence to diagnose a ZIP layout without re-extraction."""
+    print(f"[{dataset}] SOURCE DIAGNOSTICS")
+    print(f"[{dataset}] Extraction root: {source_root}")
+    if archive.is_file() and zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            members = zf.infolist()
+            valid = [
+                m for m in members
+                if not m.is_dir() and not _zip_member_is_junk(m.filename)
+            ]
+            print(
+                f"[{dataset}] ZIP: {len(members):,} entries; "
+                f"{len(valid):,} non-metadata files"
+            )
+            print(f"[{dataset}] ZIP examples: {[m.filename for m in valid[:6]]}")
+    else:
+        print(f"[{dataset}] ZIP: not available at {archive}")
+
+    if not source_root.is_dir():
+        print(f"[{dataset}] Extracted directory is missing.")
+        return
+
+    if dataset == "mnist":
+        groups, total, skipped = _mnist_checkpoint_groups(source_root)
+        print(
+            f"[mnist] Extracted .pth files: {total:,}; "
+            f"outside expected layout/invalid labels: {skipped:,}"
+        )
+        for root, group in sorted(
+            groups.items(),
+            key=lambda pair: -(
+                len(pair[1]["train"]) + len(pair[1]["test"])
+            ),
+        )[:8]:
+            print(
+                f"[mnist] Candidate {root}: "
+                f"train={len(group['train']):,}, "
+                f"test={len(group['test']):,}"
+            )
+            sample = (group["train"] or group["test"])
+            if sample:
+                print(f"[mnist] Example checkpoint: {sample[0]}")
+        if not groups:
+            examples = list(source_root.rglob("*.pth"))[:6]
+            print(f"[mnist] Unrecognized .pth examples: {examples}")
+            folders = list(source_root.rglob("mnist_png_*"))[:6]
+            print(f"[mnist] mnist_png_* examples: {folders}")
+    else:
+        split_files = list(source_root.rglob("splits.json"))[:6]
+        train_files = list(source_root.rglob("train/model_*.pth"))[:3]
+        test_files = list(source_root.rglob("test/model_*.pth"))[:3]
+        print(f"[fmnist] splits.json examples: {split_files}")
+        print(f"[fmnist] train checkpoint examples: {train_files}")
+        print(f"[fmnist] test checkpoint examples: {test_files}")
 
 
 def infer_label(path: Path) -> int:
@@ -774,6 +843,11 @@ def parse_args():
         "--overwrite",
         action="store_true",
     )
+    parser.add_argument(
+        "--inspect-source",
+        action="store_true",
+        help="Inspect downloaded/extracted files without downloading, extracting, or processing.",
+    )
     return parser.parse_args()
 
 
@@ -785,6 +859,16 @@ def main():
         if args.dataset == "all"
         else [args.dataset]
     )
+
+    if args.inspect_source:
+        for dataset in datasets:
+            cfg = DATASETS[dataset]
+            print_source_diagnostics(
+                SOURCE_ROOT / dataset,
+                dataset,
+                DOWNLOAD_ROOT / cfg["archive"],
+            )
+        return
 
     for dataset in datasets:
         source_root = ensure_source_dataset(dataset)
