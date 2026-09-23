@@ -36,6 +36,7 @@ def setup_functions():
     assert {node.name for node in selected} == FUNCTIONS
     namespace = {
         "Path": Path,
+        "os": os,
         "zipfile": zipfile,
         "tqdm": lambda items, **kwargs: items,
         "sys": sys,
@@ -99,8 +100,8 @@ def test_nested_mnist_recognizes_groups_not_metadata(setup_functions, tmp_path):
     grouped, candidate_dirs, rejected = (
         setup_functions["_mnist_checkpoint_groups"](root)
     )
-    assert candidate_dirs == 4  # 3 MNIST models and one macOS metadata folder
-    assert rejected == 1
+    assert candidate_dirs == 3  # Direct children only; macOS metadata is ignored.
+    assert rejected == 0
     assert set(grouped) == {nested}
     assert len(grouped[nested]["train"]) == 2
     assert len(grouped[nested]["test"]) == 1
@@ -199,3 +200,28 @@ def test_inspection_is_read_only(setup_functions, tmp_path):
     })
     setup_functions["main"]()
     assert inspected == ["mnist", "fmnist"]
+
+
+def test_complete_mnist_selection_is_cached(setup_functions, tmp_path):
+    """After initial discovery, build_split must not scan 70k files again."""
+    root = tmp_path / "mnist"
+    nested = root / "mnist-inrs"
+    nested.mkdir(parents=True)
+    train = nested / "mnist_png_training_0_1" / "checkpoints" / "model_final.pth"
+    test = nested / "mnist_png_testing_0_1" / "checkpoints" / "model_final.pth"
+    for checkpoint in (train, test):
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_bytes(b"example")
+
+    calls = []
+
+    def discover(path):
+        calls.append(path)
+        return {nested: {"train": [train] * 60000, "test": [test] * 10000}}, 70000, 0
+
+    setup_functions["_mnist_checkpoint_groups"] = discover
+    select = setup_functions["_select_mnist_checkpoints"]
+    first = select(root)
+    second = select(nested)  # build_split passes this nested path
+    assert first is second
+    assert calls == [root]
