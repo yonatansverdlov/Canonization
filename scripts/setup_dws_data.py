@@ -114,12 +114,122 @@ def extract_zip_with_progress(archive: Path, destination: Path) -> None:
             zf.extract(member, destination)
 
 
+def _mnist_checkpoint_groups(source_root: Path):
+    """
+    Find DWS MNIST checkpoints using the authors' mnist_png_*/**/*.pth
+    layout. An archive may also contain unrelated .pth files, so checking
+    the total number of .pth files in the extraction root is incorrect.
+
+    The key of each group is the directory containing mnist_png_* folders.
+    """
+    groups = {}
+    total_pth = 0
+    skipped_pth = 0
+
+    for path in source_root.rglob("*.pth"):
+        if not path.is_file():
+            continue
+        total_pth += 1
+
+        relative_parts = path.relative_to(source_root).parts
+        if path.name.startswith("._") or "__MACOSX" in relative_parts:
+            skipped_pth += 1
+            continue
+
+        group_index = next(
+            (
+                i for i, part in enumerate(relative_parts[:-1])
+                if part.startswith("mnist_png_")
+            ),
+            None,
+        )
+        if group_index is None:
+            skipped_pth += 1
+            continue
+
+        try:
+            label = infer_label(path)
+        except RuntimeError:
+            skipped_pth += 1
+            continue
+
+        if not 0 <= label <= 9:
+            skipped_pth += 1
+            continue
+
+        collection_root = source_root.joinpath(
+            *relative_parts[:group_index]
+        )
+        split_name = (
+            "train" if "train" in path.as_posix().lower() else "test"
+        )
+        group = groups.setdefault(
+            collection_root, {"train": [], "test": []}
+        )
+        group[split_name].append(path)
+
+    return groups, total_pth, skipped_pth
+
+
+def _select_mnist_checkpoints(source_root: Path, verbose=False):
+    if not source_root.is_dir():
+        return None
+
+    groups, total_pth, skipped_pth = _mnist_checkpoint_groups(
+        source_root
+    )
+
+    complete = [
+        (root, group)
+        for root, group in groups.items()
+        if len(group["train"]) == 60000
+        and len(group["test"]) == 10000
+    ]
+    if complete:
+        # A genuine extraction is preferred over nested copies, if present.
+        complete.sort(key=lambda pair: (len(pair[0].parts), str(pair[0])))
+        root, group = complete[0]
+        return (
+            root,
+            sorted(group["train"]),
+            sorted(group["test"]),
+        )
+
+    if verbose:
+        print(
+            f"[mnist] Discovered {total_pth:,} .pth files; "
+            f"{skipped_pth:,} are outside the original MNIST INR layout "
+            "or have invalid labels."
+        )
+        for root, group in sorted(
+            groups.items(),
+            key=lambda pair: -(
+                len(pair[1]["train"]) + len(pair[1]["test"])
+            ),
+        )[:5]:
+            print(
+                f"[mnist] Candidate {root}: "
+                f"train={len(group['train']):,}, "
+                f"test={len(group['test']):,}"
+            )
+            sample = (group["train"] or group["test"])
+            if sample:
+                print(f"[mnist] Example: {sample[0]}")
+        if not groups and total_pth:
+            examples = list(source_root.rglob("*.pth"))[:3]
+            for example in examples:
+                print(f"[mnist] Unrecognized .pth: {example}")
+
+    return None
+
+
 def find_source_dataset_root(source_root: Path, dataset: str):
     """
-    Return the directory that directly contains the source dataset.
+    Return the actual dataset directory when all source INRs are present.
 
-    FMNIST ships inside an extra fmnist_inrs/ directory and includes
-    statistics.pth in addition to the 70,000 model checkpoints.
+    MNIST is identified using the original DWS mnist_png_*/**/*.pth
+    pattern, rather than counting every .pth file in the archive.
+    FMNIST ships with its own splits.json inside fmnist_inrs/.
     """
     if not source_root.is_dir():
         return None
@@ -151,16 +261,8 @@ def find_source_dataset_root(source_root: Path, dataset: str):
 
         return None
 
-    model_files = [
-        path
-        for path in source_root.rglob("*.pth")
-        if path.name != "statistics.pth"
-    ]
-
-    if len(model_files) == 70000:
-        return source_root
-
-    return None
+    selection = _select_mnist_checkpoints(source_root)
+    return selection[0] if selection is not None else None
 
 
 def source_ready(source_root: Path, dataset: str) -> bool:
@@ -300,27 +402,22 @@ def build_fmnist_split(source_root: Path):
 
 
 def discover_source_split(source_root: Path):
-    train = []
-    test = []
-
-    for path in sorted(source_root.rglob("*.pth")):
-        item = {
-            "path": path,
-            "label": infer_label(path),
-        }
-
-        if "train" in path.as_posix().lower():
-            train.append(item)
-        else:
-            test.append(item)
-
-    if len(train) != 60000 or len(test) != 10000:
+    selection = _select_mnist_checkpoints(source_root, verbose=True)
+    if selection is None:
         raise RuntimeError(
-            "Expected the original DWS MNIST/FMNIST INR split to contain "
-            f"60000 train and 10000 test INRs, found "
-            f"{len(train)} train and {len(test)} test."
+            "Cannot identify the original 60,000 train / 10,000 test "
+            "MNIST-INR checkpoints. See the discovery report above."
         )
 
+    _, train_paths, test_paths = selection
+    train = [
+        {"path": path, "label": infer_label(path)}
+        for path in train_paths
+    ]
+    test = [
+        {"path": path, "label": infer_label(path)}
+        for path in test_paths
+    ]
     return train, test
 
 
