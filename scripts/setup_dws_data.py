@@ -870,16 +870,45 @@ def main():
             )
         return
 
+    failures = []
     for dataset in datasets:
-        source_root = ensure_source_dataset(dataset)
+        try:
+            processed_root = PROCESSED_ROOT / dataset
+            if not args.overwrite and processed_dataset_complete(
+                processed_root,
+                processed_root / "splits.json",
+            ):
+                print(f"[{dataset}] Processed dataset already complete; skipping.")
+                continue
 
-        build_geometric_dataset(
-            dataset=dataset,
-            source_root=source_root,
-            split_seed=args.split_seed,
-            verify=args.verify,
-            overwrite=args.overwrite,
-        )
+            source_root = ensure_source_dataset(dataset)
+            build_geometric_dataset(
+                dataset=dataset,
+                source_root=source_root,
+                split_seed=args.split_seed,
+                verify=args.verify,
+                overwrite=args.overwrite,
+            )
+        except Exception as exc:
+            # A failure for one dataset must not prevent preparing the other.
+            failures.append((dataset, exc))
+            print(
+                f"\n[{dataset}] FAILED ({type(exc).__name__}): {exc}",
+                file=sys.stderr,
+            )
+            print(
+                f"[{dataset}] Existing downloads and extracted files retained.",
+                file=sys.stderr,
+            )
+
+    print("\n========== DWS DATA SETUP SUMMARY ==========")
+    for dataset in datasets:
+        failure = next((error for name, error in failures if name == dataset), None)
+        print(f"{dataset}: {'FAILED: ' + str(failure) if failure else 'OK'}")
+    print("============================================")
+
+    if failures:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
