@@ -86,8 +86,8 @@ def test_nested_mnist_recognizes_groups_not_metadata(setup_functions, tmp_path):
     (junk / "._0.pth").write_bytes(b"metadata")
 
     grouped, count, ignored = setup_functions["_mnist_checkpoint_groups"](root)
-    assert count == 4
-    assert ignored == 1
+    assert count == 5  # 3 model checkpoints + statistics + macOS metadata
+    assert ignored == 2
     assert set(grouped) == {nested}
     assert len(grouped[nested]["train"]) == 2
     assert len(grouped[nested]["test"]) == 1
