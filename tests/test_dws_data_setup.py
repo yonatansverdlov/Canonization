@@ -69,33 +69,50 @@ def test_resume_extraction_preserves_completed_files(setup_functions, tmp_path):
 
 
 def test_nested_mnist_recognizes_groups_not_metadata(setup_functions, tmp_path):
+    # Match the exact structure of the downloaded mixed MNIST/CIFAR archive.
     root = tmp_path / "mnist"
     nested = root / "mnist-inrs"
-    group = nested / "mnist_png_7_0"
-    for split, name in [
-        ("train", "0.pth"), ("train", "1.pth"), ("test", "2.pth")
+    for split, suffix in [
+        ("training", "0001"), ("training", "0002"), ("testing", "0003")
     ]:
-        file = group / split / name
-        file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_bytes(b"checkpoint")
+        checkpoint = (
+            nested / f"mnist_png_{split}_7_{suffix}"
+            / "checkpoints" / "model_final.pth"
+        )
+        checkpoint.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint.write_bytes(b"checkpoint")
 
-    unrelated = nested / "statistics.pth"
-    unrelated.write_bytes(b"stats")
-    junk = root / "__MACOSX" / "mnist_png_7_0" / "train"
-    junk.mkdir(parents=True)
-    (junk / "._0.pth").write_bytes(b"metadata")
+    (nested / "statistics.pth").write_bytes(b"stats")
+    cifar = (
+        nested / "cifar10_png_train_airplane_0001"
+        / "checkpoints" / "model_final.pth"
+    )
+    cifar.parent.mkdir(parents=True)
+    cifar.write_bytes(b"cifar - not mnist")
+    junk = (
+        root / "__MACOSX" / "mnist_png_training_7_9999"
+        / "checkpoints" / "model_final.pth"
+    )
+    junk.parent.mkdir(parents=True)
+    junk.write_bytes(b"metadata")
 
-    grouped, count, ignored = setup_functions["_mnist_checkpoint_groups"](root)
-    assert count == 5  # 3 model checkpoints + statistics + macOS metadata
-    assert ignored == 2
+    grouped, candidate_dirs, rejected = (
+        setup_functions["_mnist_checkpoint_groups"](root)
+    )
+    assert candidate_dirs == 4  # 3 MNIST models and one macOS metadata folder
+    assert rejected == 1
     assert set(grouped) == {nested}
     assert len(grouped[nested]["train"]) == 2
     assert len(grouped[nested]["test"]) == 1
+    assert all(
+        path.name == "model_final.pth"
+        for paths in grouped[nested].values() for path in paths
+    )
 
-    # Model a full dataset without writing 70,000 files to disk.
+    # Simulate the complete authors' split without creating 70k checkpoints.
     grouped[nested]["train"] *= 30000
     grouped[nested]["test"] *= 10000
-    setup_functions["_mnist_checkpoint_groups"] = lambda _: (grouped, 70001, 1)
+    setup_functions["_mnist_checkpoint_groups"] = lambda _: (grouped, 70000, 0)
     assert setup_functions["find_source_dataset_root"](root, "mnist") == nested
 
 
