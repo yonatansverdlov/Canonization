@@ -44,14 +44,21 @@ def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset, capsys):
     monkeypatch.setattr(runner.subprocess, "run", fake_subprocess_run)
     runner.main(["--dataset", dataset])
     assert calls == ["hilbert", "lex", "ply"]
-    payload = json.loads((runner.RESULTS_ROOT / f"table2_modelnet{dataset}.json").read_text())
+    payload = json.loads((runner.RESULTS_ROOT / f"modelnet{dataset}_results.json").read_text())
     assert [row["model"] for row in payload["rows"]] == ["Hilbert", "Lex-Sort", "MLP"]
-    csv_content = (runner.RESULTS_ROOT / f"table2_modelnet{dataset}.csv").read_text()
+    csv_content = (runner.RESULTS_ROOT / f"modelnet{dataset}_results.csv").read_text()
     assert len(csv_content.strip().splitlines()) == 4
     output = capsys.readouterr().out
+    table = output[output.rfind("┌"):]
+    assert f"MODELNET{dataset} RESULTS (5 SEEDS)" in table
+    assert "Test accuracy (%)" in table
+    assert "Generalization gap (pp)" in table
+    assert table.count("│") == 18  # title 2, header 4, three data rows 12
     for label in ("Hilbert", "Lex-Sort", "MLP"):
-        assert f"{label}: test acc" in output
-    assert output.count("generalization gap (train - test) 10.00 ± 1.00 pp") == 3
+        assert f"│ {label:<8} │" in table
+    assert table.count("80.00 ± 2.00") == 3
+    assert table.count("10.00 ± 1.00") == 3
+    assert "JSON:" not in table and "CSV:" not in table
 
 
 def test_explicit_ordering_is_backwards_compatible(monkeypatch, tmp_path):
