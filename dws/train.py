@@ -16,6 +16,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import trange
 
+from experiment_tables import format_mean_std, print_table
+
 from dws.data import (
     DWSProcessedDataset,
     collate_weight_space,
@@ -449,16 +451,17 @@ def run(args) -> list[dict]:
         "dwsnet": "DWSNet",
     }[args.model]
 
-    print()
-    print(f"Dataset: {display_dataset}")
-    print(f"Model: {display_model}")
-    print(
-        f"Mean test accuracy: "
-        f"{summary['mean_test_acc']:.6f}"
-    )
-    print(
-        f"Std test accuracy: "
-        f"{summary['std_test_acc']:.6f}"
+    print_table(
+        f"{display_dataset.upper()} / {display_model} ({len(args.seeds)} SEEDS)",
+        ("Model", "Test accuracy (%)"),
+        [(
+            display_model,
+            format_mean_std(
+                summary["mean_test_acc"],
+                summary["std_test_acc"],
+            ),
+        )],
+        right_align=(1,),
     )
 
     return results
