@@ -1,7 +1,13 @@
 import argparse
 import os
+import sys
 import random
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from experiment_tables import print_table
 from typing import Dict, List
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
@@ -429,13 +435,18 @@ if __name__ == "__main__":
         seed=args.seed,
     )
 
-    print()
-print("Results")
-print("-" * 36)
-print(f"{'method':<20} {'distance':>12}")
-print("-" * 32)
-
-for method, value in results.items():
-    print(f"{method:<20} {value:>12.6f}")
-
-print("-" * 32)
+    display_names = {
+        "l2": "L2",
+        "group": "Group",
+        "can_learned": "Learned canonization",
+        "can_frozen": "Frozen canonization",
+    }
+    print_table(
+        f"ROTATED MNIST DISTANCES ({args.split.upper()}, {args.reduce_mode.upper()})",
+        ("Method", "Distance"),
+        [
+            (display_names.get(method, method), f"{value:.6f}")
+            for method, value in results.items()
+        ],
+        right_align=(1,),
+    )
