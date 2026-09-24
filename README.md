@@ -66,8 +66,9 @@ ordering retains its own hyperparameters from
 
 The combined results are saved as
 `results/modelnet/table2_modelnet40.{json,csv}` and
-`results/modelnet/table2_modelnet10.{json,csv}`, with per-seed summaries
-under `ModelNet/training/checkpoints/modelnet{40,10}_{hilbert,lex,ply}/`.
+`results/modelnet/table2_modelnet10.{json,csv}`, with per-model summaries
+under `ModelNet/training/checkpoints/modelnet{40,10}_{hilbert,lex,ply}/`
+and per-seed checkpoints under matching `_seed0` through `_seed4` folders.
 
 To run only one model, the original `--ordering hilbert|lex|ply` option
 remains available.
