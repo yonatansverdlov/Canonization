@@ -594,6 +594,25 @@ def run_train_multiple_seeds(args, io):
     )
     io.cprint("===================================")
 
+    # Machine-readable per-seed results and mean/std for the Table 2 runner.
+    summary = {
+        "dataset": args.dataset,
+        "model": args.model,
+        "ordering": args.ordering,
+        "seeds": [int(result["seed"]) for result in all_results],
+        "test_acc_mean": test_mean,
+        "test_acc_std": test_std,
+        "gen_gap_mean": gap_mean,
+        "gen_gap_std": gap_std,
+        "runs": all_results,
+    }
+    summary_path = os.path.join(
+        "checkpoints", base_exp_name, "summary.json"
+    )
+    with open(summary_path, "w") as f:
+        json.dump(summary, f, indent=2)
+    io.cprint(f"Saved summary: {summary_path}")
+
     return all_results
 
 def run_test(args, io):
