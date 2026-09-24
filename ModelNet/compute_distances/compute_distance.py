@@ -17,6 +17,13 @@ from __future__ import annotations
 
 import os
 import argparse
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from experiment_tables import print_table
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 from dataclasses import dataclass
@@ -376,11 +383,22 @@ def main():
     print("\nComputing l2_wass (Hungarian assignment)...")
     results["l2_wass"] = score_wasserstein(train_by_class, test_ds, cfg, wass_batch=32)
 
-    print("\n================ SUMMARY ================")
-    print(f"dataset_reduce : {args.dataset_reduce}")
-    for k in ["l2", "l2_sorted", "l2_hilbert", "l2_wass"]:
-        print(f"{k:10s} : {results[k]}")
-    print("========================================\n")
+    labels = {
+        "l2": "MLP / identity",
+        "l2_sorted": "Lex-Sort",
+        "l2_hilbert": "Hilbert",
+        "l2_wass": "Wasserstein",
+    }
+    print_table(
+        f"MODELNET{args.dataset_name} COVERING NUMBERS "
+        f"(P={args.P}, {args.dataset_reduce.upper()})",
+        ("Method", "Covering distance"),
+        [
+            (labels[key], f"{results[key]:.6f}")
+            for key in ("l2", "l2_sorted", "l2_hilbert", "l2_wass")
+        ],
+        right_align=(1,),
+    )
 
 
 if __name__ == "__main__":
