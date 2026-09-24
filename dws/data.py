@@ -289,13 +289,27 @@ def _statistics_path(dataset: str, representation: str) -> Path:
 
 
 def _load_bundled_raw_statistics(dataset: str) -> dict | None:
+    """Load Fashion-MNIST's bundled statistics without scanning the INR zoo.
+
+    The MNIST source ZIP also contains CIFAR checkpoints, so an arbitrary
+    statistics.pth found in that archive is not safe to use for MNIST.
+    MNIST statistics are computed from its processed training split instead.
     """
-    Fashion-MNIST-INR is distributed with statistics.pth.
-    If compatible bundled statistics exist, use them for the raw representation.
-    """
-    candidates = list((SOURCE_ROOT / dataset).rglob("statistics.pth"))
+    if dataset != "fmnist":
+        return None
+
+    root = SOURCE_ROOT / "fmnist"
+    # The FMNIST archive normally has a single fmnist_inrs/ wrapper.
+    # Check only known shallow locations, never rglob over 70k checkpoints.
+    candidates = (
+        root / "statistics.pth",
+        root / "fmnist_inrs" / "statistics.pth",
+        root / "fmnist-inrs" / "statistics.pth",
+    )
 
     for path in candidates:
+        if not path.is_file():
+            continue
         try:
             stats = torch.load(path, map_location="cpu", weights_only=True)
         except TypeError:
@@ -309,7 +323,6 @@ def _load_bundled_raw_statistics(dataset: str) -> dict | None:
             return stats
 
     return None
-
 
 def compute_statistics(
     dataset: str,
