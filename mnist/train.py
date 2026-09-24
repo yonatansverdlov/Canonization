@@ -1,6 +1,7 @@
 from statistics import mean, stdev
 import os
 import random
+import sys
 
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
@@ -14,6 +15,11 @@ from torch.utils.data import DataLoader
 from utils.models import AverageCNN, CNp4CNN, CNN
 from argparse import ArgumentParser
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from experiment_tables import format_mean_std, print_table
 
 
 def set_seed(seed: int, strict: bool = True) -> None:
@@ -246,9 +252,11 @@ if __name__ == "__main__":
 
     test_accs = [r["test_acc"] for r in results]
 
-    print()
-    print("Dataset: Rotated MNIST")
-    print(f"Model: {MODEL_TYPE}")
-    print(f"Mean test accuracy: {mean(test_accs):.6f}")
+    mean_test_acc = mean(test_accs)
     std_test_acc = stdev(test_accs) if len(seeds) > 1 else 0.0
-    print(f"Std test accuracy: {std_test_acc:.6f}")
+    print_table(
+        f"ROTATED MNIST / {MODEL_TYPE} ({len(seeds)} SEEDS)",
+        ("Model", "Test accuracy (%)"),
+        [(MODEL_TYPE, format_mean_std(mean_test_acc, std_test_acc))],
+        right_align=(1,),
+    )
