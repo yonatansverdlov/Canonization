@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Table 2: run Hilbert, Lex-Sort, and the unsorted MLP on one ModelNet dataset."""
+"""Run Hilbert, Lex-Sort, and the unsorted MLP on one ModelNet dataset."""
 
 import argparse
 import csv
@@ -15,7 +15,7 @@ RESULTS_ROOT = REPO_ROOT / "results" / "modelnet"
 
 # All three rows use the same GlobalMLPClassifier. The 'ply' ordering is the
 # unsorted MLP baseline; 'lex' and 'hilbert' sort the input point cloud.
-TABLE2_MODELS = (
+MODELS = (
     ("Hilbert", "hilbert"),
     ("Lex-Sort", "lex"),
     ("MLP", "ply"),
@@ -25,7 +25,7 @@ TABLE2_MODELS = (
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Run ModelNet Table 2: Hilbert, Lex-Sort and unsorted MLP "
+            "Run Hilbert, Lex-Sort and unsorted MLP "
             "on one dataset, five seeds per model."
         ),
     )
@@ -39,7 +39,7 @@ def parse_args(argv=None):
         "--ordering",
         choices=["all", "hilbert", "lex", "ply"],
         default="all",
-        help="Run all three Table 2 models (default), or just one.",
+        help="Run all three models (default), or just one.",
     )
     parser.add_argument(
         "--seeds",
@@ -82,7 +82,7 @@ def main(argv=None):
     dataset = f"modelnet{args.dataset}"
     models = [
         (label, ordering)
-        for label, ordering in TABLE2_MODELS
+        for label, ordering in MODELS
         if args.ordering in ("all", ordering)
     ]
     rows = []
@@ -101,7 +101,7 @@ def main(argv=None):
         if args.epochs is not None:
             cmd.extend(("--epochs", str(args.epochs)))
 
-        print(f"\n=== Table 2: {dataset} / {label} ({len(args.seeds)} seeds) ===", flush=True)
+        print(f"\n=== {dataset} / {label} ({len(args.seeds)} seeds) ===", flush=True)
         print("$", " ".join(cmd), flush=True)
         subprocess.run(cmd, cwd=TRAINING_DIR, check=True)
 
@@ -131,7 +131,7 @@ def main(argv=None):
         write_table(dataset, rows)
 
     json_path, csv_path = write_table(dataset, rows)
-    print(f"\n=== Table 2: {dataset} ===")
+    print(f"\n=== {dataset} ===")
     for row in rows:
         print(
             f"{row['model']}: test acc "
