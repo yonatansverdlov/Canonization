@@ -1,4 +1,4 @@
-"""Dataset-free tests of the two-command Table 2 runner."""
+"""Dataset-free tests of the two-command ModelNet experiment runner."""
 
 import importlib.util
 import json
@@ -13,7 +13,7 @@ spec.loader.exec_module(runner)
 
 
 @pytest.mark.parametrize("dataset", ["10", "40"])
-def test_one_command_runs_three_table2_models(monkeypatch, tmp_path, dataset):
+def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset):
     monkeypatch.setattr(runner, "TRAINING_DIR", tmp_path / "training")
     monkeypatch.setattr(runner, "RESULTS_ROOT", tmp_path / "results")
     calls = []
