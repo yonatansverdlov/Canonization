@@ -59,7 +59,7 @@ def parse_args(argv=None):
 
 def write_table(dataset, rows):
     RESULTS_ROOT.mkdir(parents=True, exist_ok=True)
-    stem = f"table2_{dataset}"
+    stem = f"{dataset}_results"
     json_path = RESULTS_ROOT / f"{stem}.json"
     csv_path = RESULTS_ROOT / f"{stem}.csv"
     payload = {"dataset": dataset, "metric_unit": "fraction", "rows": rows}
@@ -75,6 +75,53 @@ def write_table(dataset, rows):
         writer.writeheader()
         writer.writerows({name: row[name] for name in columns} for row in rows)
     return json_path, csv_path
+
+
+
+def print_results_table(dataset, rows):
+    """Print a compact, aligned Unicode table with both evaluation metrics."""
+    headers = ("Model", "Test accuracy (%)", "Generalization gap (pp)")
+    values = [
+        (
+            row["model"],
+            f"{100 * row['test_acc_mean']:.2f} ± {100 * row['test_acc_std']:.2f}",
+            f"{100 * row['gen_gap_mean']:.2f} ± {100 * row['gen_gap_std']:.2f}",
+        )
+        for row in rows
+    ]
+    widths = [
+        max(len(header), *(len(value[i]) for value in values))
+        for i, header in enumerate(headers)
+    ]
+    span = sum(widths) + 2 * len(widths) + len(widths) - 1
+    title = f"{dataset.upper()} RESULTS"
+    if len({row["n_seeds"] for row in rows}) == 1:
+        title += f" ({rows[0]['n_seeds']} SEEDS)"
+
+    def rule(left, middle, right):
+        return left + middle.join("─" * (width + 2) for width in widths) + right
+
+    def cells(items):
+        return (
+            "│ "
+            + f"{items[0]:<{widths[0]}}"
+            + " │ "
+            + f"{items[1]:>{widths[1]}}"
+            + " │ "
+            + f"{items[2]:>{widths[2]}}"
+            + " │"
+        )
+
+    print()
+    print("┌" + "─" * span + "┐")
+    print("│" + title.center(span) + "│")
+    print(rule("├", "┬", "┤"))
+    print(cells(headers))
+    print(rule("├", "┼", "┤"))
+    for value in values:
+        print(cells(value))
+    print(rule("└", "┴", "┘"))
+
 
 
 def main(argv=None):
@@ -130,19 +177,8 @@ def main(argv=None):
         # Preserve completed rows if a later model fails or is interrupted.
         write_table(dataset, rows)
 
-    json_path, csv_path = write_table(dataset, rows)
-    print(f"\n=== {dataset} ===")
-    for row in rows:
-        print(
-            f"{row['model']}: test acc "
-            f"{100 * row['test_acc_mean']:.2f} ± "
-            f"{100 * row['test_acc_std']:.2f}% | "
-            f"generalization gap (train - test) "
-            f"{100 * row['gen_gap_mean']:.2f} ± "
-            f"{100 * row['gen_gap_std']:.2f} pp"
-        )
-    print(f"JSON: {json_path}")
-    print(f"CSV: {csv_path}")
+    write_table(dataset, rows)
+    print_results_table(dataset, rows)
 
 
 if __name__ == "__main__":
