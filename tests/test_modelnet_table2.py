@@ -13,7 +13,7 @@ spec.loader.exec_module(runner)
 
 
 @pytest.mark.parametrize("dataset", ["10", "40"])
-def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset):
+def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset, capsys):
     monkeypatch.setattr(runner, "TRAINING_DIR", tmp_path / "training")
     monkeypatch.setattr(runner, "RESULTS_ROOT", tmp_path / "results")
     calls = []
@@ -48,6 +48,10 @@ def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset):
     assert [row["model"] for row in payload["rows"]] == ["Hilbert", "Lex-Sort", "MLP"]
     csv_content = (runner.RESULTS_ROOT / f"table2_modelnet{dataset}.csv").read_text()
     assert len(csv_content.strip().splitlines()) == 4
+    output = capsys.readouterr().out
+    for label in ("Hilbert", "Lex-Sort", "MLP"):
+        assert f"{label}: test acc" in output
+    assert output.count("generalization gap (train - test) 10.00 ± 1.00 pp") == 3
 
 
 def test_explicit_ordering_is_backwards_compatible(monkeypatch, tmp_path):
