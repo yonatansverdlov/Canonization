@@ -16,7 +16,6 @@ from dws.canonicalize import get_layers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROCESSED_ROOT = REPO_ROOT / "data" / "dws" / "processed"
-SOURCE_ROOT = REPO_ROOT / "data" / "dws" / "source"
 
 
 class WeightSpaceExample(NamedTuple):
@@ -288,42 +287,6 @@ def _statistics_path(dataset: str, representation: str) -> Path:
     return PROCESSED_ROOT / dataset / f"statistics_{representation}.pt"
 
 
-def _load_bundled_raw_statistics(dataset: str) -> dict | None:
-    """Load Fashion-MNIST's bundled statistics without scanning the INR zoo.
-
-    The MNIST source ZIP also contains CIFAR checkpoints, so an arbitrary
-    statistics.pth found in that archive is not safe to use for MNIST.
-    MNIST statistics are computed from its processed training split instead.
-    """
-    if dataset != "fmnist":
-        return None
-
-    root = SOURCE_ROOT / "fmnist"
-    # The FMNIST archive normally has a single fmnist_inrs/ wrapper.
-    # Check only known shallow locations, never rglob over 70k checkpoints.
-    candidates = (
-        root / "statistics.pth",
-        root / "fmnist_inrs" / "statistics.pth",
-        root / "fmnist-inrs" / "statistics.pth",
-    )
-
-    for path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            stats = torch.load(path, map_location="cpu", weights_only=True)
-        except TypeError:
-            stats = torch.load(path, map_location="cpu")
-
-        if (
-            isinstance(stats, dict)
-            and "weights" in stats
-            and "biases" in stats
-        ):
-            return stats
-
-    return None
-
 def compute_statistics(
     dataset: str,
     representation: str,
@@ -393,19 +356,14 @@ def get_statistics(
 ) -> dict:
     path = _statistics_path(dataset, representation)
 
-    if path.exists():
+    if path.is_file():
+        print(f"Loading statistics: {path}")
         try:
             return torch.load(path, map_location="cpu", weights_only=True)
         except TypeError:
             return torch.load(path, map_location="cpu")
 
-    if representation == "raw":
-        bundled = _load_bundled_raw_statistics(dataset)
-        if bundled is not None:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(bundled, path)
-            print(f"Using bundled raw statistics: {path}")
-            return bundled
+    print(f"Statistics cache not found: {path}. Computing statistics...")
 
     statistics = compute_statistics(
         dataset=dataset,
