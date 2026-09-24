@@ -6,6 +6,11 @@ import random
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from experiment_tables import format_mean_std, print_table
+
 os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 
 import numpy as np
@@ -385,19 +390,37 @@ def run_many_seeds(args):
 
     ddof = 1 if len(all_results) > 1 else 0
 
-    print()
-    print("========== FINAL SUMMARY ==========")
-    print(f"Dataset: {args.dataset}")
-    print(f"Model: {args.model}")
-    print(
-        "Test accuracy: "
-        f"{test_accs.mean():.6f} ± {test_accs.std(ddof=ddof):.6f}"
+    test_mean = float(test_accs.mean())
+    test_std = float(test_accs.std(ddof=ddof))
+    gap_mean = float(gen_gaps.mean())
+    gap_std = float(gen_gaps.std(ddof=ddof))
+
+    # One consistent summary location for the four-model experiment runner.
+    summary_root = REPO_ROOT / "results" / "modelnet" / "canonization"
+    summary_root.mkdir(parents=True, exist_ok=True)
+    summary = {
+        "dataset": args.dataset,
+        "model": args.model,
+        "seeds": [int(r["seed"]) for r in all_results],
+        "test_acc_mean": test_mean,
+        "test_acc_std": test_std,
+        "gen_gap_mean": gap_mean,
+        "gen_gap_std": gap_std,
+        "runs": all_results,
+    }
+    with (summary_root / f"{args.model}_summary.json").open("w") as output:
+        json.dump(summary, output, indent=2)
+
+    print_table(
+        f"{args.dataset.upper()} / {args.model} ({len(all_results)} SEEDS)",
+        ("Model", "Test accuracy (%)", "Generalization gap (pp)"),
+        [(
+            args.model,
+            format_mean_std(test_mean, test_std),
+            format_mean_std(gap_mean, gap_std),
+        )],
+        right_align=(1, 2),
     )
-    print(
-        "Generalization gap (train - test): "
-        f"{gen_gaps.mean():.6f} ± {gen_gaps.std(ddof=ddof):.6f}"
-    )
-    print("===================================")
 
     return all_results
 
