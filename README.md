@@ -49,7 +49,7 @@ Download and prepare the required ModelNet datasets by running:
 ```bash
 python scripts/setup_modelnet.py
 ```
-### Table 2: ModelNet classification
+### ModelNet classification
 
 Two commands run all three models (Hilbert, Lex-Sort, and MLP without sorting)
 on ModelNet40 and ModelNet10. Each model runs with seeds 0–4:
@@ -63,12 +63,6 @@ The MLP baseline uses `--ordering ply` internally (the original, unsorted
 point order); the other two use `hilbert` and `lex`, respectively. Each
 ordering retains its own hyperparameters from
 `ModelNet/training/configs/modelnet.json`.
-
-The combined results are saved as
-`results/modelnet/table2_modelnet40.{json,csv}` and
-`results/modelnet/table2_modelnet10.{json,csv}`, with per-model summaries
-under `ModelNet/training/checkpoints/modelnet{40,10}_{hilbert,lex,ply}/`
-and per-seed checkpoints under matching `_seed0` through `_seed4` folders.
 
 To run only one model, the original `--ordering hilbert|lex|ply` option
 remains available.
