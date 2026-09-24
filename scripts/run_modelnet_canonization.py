@@ -19,33 +19,38 @@ MODELS = [
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Run one ModelNet rotation/canonicalization experiment."
+        description="Run all four ModelNet rotation/canonicalization models."
     )
     parser.add_argument(
         "--model",
-        choices=MODELS,
-        required=True,
-        help="Model to run.",
+        choices=["all", *MODELS],
+        default="all",
+        help="Run all four models (default), or select one.",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
+    models = MODELS if args.model == "all" else [args.model]
 
-    cmd = [
-        sys.executable,
-        "train_rot.py",
-        "--model",
-        args.model,
-        "--dataset",
-        "modelnet40",
-        "--run_5_seeds",
-        "true",
-    ]
+    for model in models:
+        cmd = [
+            sys.executable,
+            "train_rot.py",
+            "--model",
+            model,
+            "--dataset",
+            "modelnet40",
+            "--run_5_seeds",
+            "true",
+        ]
 
-    print("$", " ".join(cmd))
-    subprocess.run(cmd, cwd=TRAINING_DIR, check=True)
+        print(f"\n=== ModelNet40: {model} (5 seeds) ===", flush=True)
+        print("$", " ".join(cmd), flush=True)
+        subprocess.run(cmd, cwd=TRAINING_DIR, check=True)
+
+    print("\nAll requested ModelNet40 models completed.", flush=True)
 
 
 if __name__ == "__main__":
