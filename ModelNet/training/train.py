@@ -594,7 +594,7 @@ def run_train_multiple_seeds(args, io):
     )
     io.cprint("===================================")
 
-    # Machine-readable per-seed results and mean/std for the Table 2 runner.
+    # Machine-readable per-seed results and mean/std for the experiment runner.
     summary = {
         "dataset": args.dataset,
         "model": args.model,
