@@ -94,6 +94,8 @@ Run the experiment on ModelNet40:
 python scripts/run_modelnet_covering.py --dataset 40
 ```
 
+The covering distances are printed as a table.
+
 ## Rotated MNIST
 
 ### Training
