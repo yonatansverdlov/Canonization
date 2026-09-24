@@ -136,7 +136,10 @@ def main(argv=None):
         print(
             f"{row['model']}: test acc "
             f"{100 * row['test_acc_mean']:.2f} ± "
-            f"{100 * row['test_acc_std']:.2f}%"
+            f"{100 * row['test_acc_std']:.2f}% | "
+            f"generalization gap (train - test) "
+            f"{100 * row['gen_gap_mean']:.2f} ± "
+            f"{100 * row['gen_gap_std']:.2f} pp"
         )
     print(f"JSON: {json_path}")
     print(f"CSV: {csv_path}")
