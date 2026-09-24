@@ -13,6 +13,8 @@ This repository contains the experiments for studying canonization and invariant
   - [Installation](#installation)
   - [ModelNet](#modelnet)
     - [Data Setup](#data-setup)
+    - [ModelNet classification](#modelnet-classification)
+    - [ModelNet rotation and canonization](#modelnet-rotation-and-canonization)
     - [Covering Number Experiment](#covering-number-experiment)
   - [Rotated MNIST](#rotated-mnist)
   - [Deep Weight Spaces](#deep-weight-spaces)
@@ -66,6 +68,17 @@ ordering retains its own hyperparameters from
 
 To run only one model, the original `--ordering hilbert|lex|ply` option
 remains available.
+
+### ModelNet rotation and canonization
+
+Run PurePCA, FrameAveraging, Skewness, and RandomFrame on ModelNet40
+with five seeds per model:
+
+```bash
+python scripts/run_modelnet_canonization.py
+```
+
+The combined results are printed as a table.
 
 ### Covering Number Experiment
 
