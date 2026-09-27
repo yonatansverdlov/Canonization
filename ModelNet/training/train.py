@@ -591,7 +591,15 @@ def run_train_multiple_seeds(args, io):
     io.cprint("")
     io.cprint("========== FINAL SUMMARY ==========")
     io.cprint(f"Dataset: {args.dataset}")
-    io.cprint(f"Model: {args.ordering}")
+    model_label = (
+        "DeepSets" if args.model == "deepsets"
+        else {"hilbert": "Hilbert", "lex": "Lex-Sort", "ply": "MLP"}.get(
+            args.ordering, args.model
+        ) if args.model == "global_mlp"
+        else args.model
+    )
+    io.cprint(f"Model: {model_label}")
+    io.cprint(f"Ordering: {args.ordering}")
     io.cprint(
         "Test accuracy: %.6f ± %.6f"
         % (test_mean, test_std)
