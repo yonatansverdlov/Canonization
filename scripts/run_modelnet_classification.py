@@ -140,7 +140,7 @@ def main(argv=None):
         ordering = "ply" if selection == "deepsets" else selection
         # Keep the earlier DeepSets checkpoints intact for comparison.
         exp_name = (
-            f"{dataset}_deepsets_reference_hps"
+            f"{dataset}_deepsets_scale_bs32"
             if selection == "deepsets" else f"{dataset}_{selection}"
         )
         cmd = [
