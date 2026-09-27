@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Hilbert, Lex-Sort, and the unsorted MLP on one ModelNet dataset."""
+"""Run the paper baselines and optional pointwise DeepSets on ModelNet."""
 
 import argparse
 import csv
@@ -13,12 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAINING_DIR = REPO_ROOT / "ModelNet" / "training"
 RESULTS_ROOT = REPO_ROOT / "results" / "modelnet"
 
-# All three rows use the same GlobalMLPClassifier. The 'ply' ordering is the
-# unsorted MLP baseline; 'lex' and 'hilbert' sort the input point cloud.
+# The three paper baselines use GlobalMLPClassifier. The optional DeepSets
+# applies the same MLP pointwise, sums its logits, and reuses the 'ply' config.
 MODELS = (
     ("Hilbert", "hilbert"),
     ("Lex-Sort", "lex"),
     ("MLP", "ply"),
+    ("DeepSets", "deepsets"),
 )
 
 
@@ -37,9 +38,14 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--ordering",
-        choices=["all", "hilbert", "lex", "ply"],
+        choices=["all", "hilbert", "lex", "ply", "deepsets"],
         default="all",
-        help="Run all three models (default), or just one.",
+        help="Run the original three models (default), or just one, including DeepSets.",
+    )
+    parser.add_argument(
+        "--include_deepsets",
+        action="store_true",
+        help="Include DeepSets when --ordering all; keep the three paper baselines as default.",
     )
     parser.add_argument(
         "--seeds",
@@ -128,19 +134,22 @@ def main(argv=None):
     args = parse_args(argv)
     dataset = f"modelnet{args.dataset}"
     models = [
-        (label, ordering)
-        for label, ordering in MODELS
-        if args.ordering in ("all", ordering)
+        (label, selection)
+        for label, selection in MODELS
+        if args.ordering == selection
+        or (args.ordering == "all" and (selection != "deepsets" or args.include_deepsets))
     ]
     rows = []
 
-    for label, ordering in models:
-        exp_name = f"{dataset}_{ordering}"
+    for label, selection in models:
+        training_model = "deepsets" if selection == "deepsets" else "global_mlp"
+        ordering = "ply" if selection == "deepsets" else selection
+        exp_name = f"{dataset}_{selection}"
         cmd = [
             sys.executable, "train.py",
             "--dataset", dataset,
             "--ordering", ordering,
-            "--model", "global_mlp",
+            "--model", training_model,
             "--run_5_seeds", "true",
             "--seeds", *(str(seed) for seed in args.seeds),
             "--exp_name", exp_name,
@@ -159,7 +168,11 @@ def main(argv=None):
             )
         with summary_path.open() as f:
             summary = json.load(f)
-        if summary.get("dataset") != dataset or summary.get("ordering") != ordering:
+        if (
+            summary.get("dataset") != dataset
+            or summary.get("ordering") != ordering
+            or summary.get("model", training_model) != training_model
+        ):
             raise RuntimeError(f"Unexpected or stale summary: {summary_path}")
         if summary.get("seeds") != args.seeds:
             raise RuntimeError(f"Summary seeds do not match this run: {summary_path}")

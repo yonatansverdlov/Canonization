@@ -403,10 +403,12 @@ class GlobalMLPClassifier(nn.Module):
                  point_dropout=0.2,
                  mlp_dims=[256, 128, 64],  # Using the tighter bottleneck
                  ordering_type='lex',  # Can be 'pca', 'lex', 'hilbert', 'ply'
-                 hilbert_m=12):
+                 hilbert_m=12,
+                 per_point=False):
         super().__init__()
 
         self.num_points = num_points
+        self.per_point = per_point
 
         # --- Internal Point Ordering ---
         self.dynamic_order = DynamicOrdering(ordering_type=ordering_type, hilbert_m=hilbert_m)
@@ -418,7 +420,9 @@ class GlobalMLPClassifier(nn.Module):
         # Use Dropout1d to drop entire points (it expects shape: B, Channels, Sequence)
         # Point-Level Dropout
         self.point_dropout = nn.Dropout1d(p=point_dropout)
-        self.input_dim = num_points * (in_channels * num_bands * 2)
+        # A pointwise MLP accepts d features, instead of N*d flattened features.
+        point_feature_dim = in_channels * num_bands * 2
+        self.input_dim = point_feature_dim if per_point else num_points * point_feature_dim
 
         blocks = []
         current_dim = self.input_dim
@@ -448,13 +452,26 @@ class GlobalMLPClassifier(nn.Module):
         # Dropout1d expects (Batch, Channels, Length), so we permute
         x = self.point_dropout(x)
 
-        x = x.view(B, -1)
+        if not self.per_point:
+            x = x.view(B, -1)
         x = self.input_drop(x)
 
         # --- 3. Pass through MLP ---
         x = self.blocks(x)
         x = self.final_norm(x)
-        return self.head(x)
+        logits = self.head(x)
+        return logits.sum(dim=1) if self.per_point else logits
+
+
+class DeepSetsMLPClassifier(GlobalMLPClassifier):
+    """The baseline MLP applied to each point, followed only by a sum.
+
+    The first residual block accepts d Fourier features instead of N*d;
+    every subsequent MLP layer and the per-point classification head are
+    exactly those of GlobalMLPClassifier. No post-sum network is added.
+    """
+    def __init__(self, **kwargs):
+        super().__init__(ordering_type='ply', per_point=True, **kwargs)
 
 
 class Canonicalizer:

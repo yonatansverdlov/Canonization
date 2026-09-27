@@ -1,14 +1,18 @@
-# Canonization
+# When and How to Canonize: A Generalization Perspective
+
+**Paper:** [arXiv:2605.11008](https://arxiv.org/abs/2605.11008) · [PDF](https://arxiv.org/pdf/2605.11008)
+
+**Keywords:** canonization, canonicalization, invariant learning, geometric deep learning, group invariance, symmetry, point clouds, ModelNet, Hilbert curves, lexicographic sorting, DeepSets, rotated MNIST, deep weight spaces.
 
 <p align="center">
   <img src="hilbert.png" width="700">
 </p>
 
-This repository contains the experiments for studying canonization and invariant learning across point clouds, image rotations, and neural-network weight spaces.
+Official experiment code for **When and How to Canonize: A Generalization Perspective**. It studies canonization and invariant learning across point clouds, image rotations, and neural-network weight spaces, including Hilbert-curve and lexicographic point sorting.
 
 ## Contents
 
-- [Canonization](#canonization)
+- [When and How to Canonize](#when-and-how-to-canonize-a-generalization-perspective)
   - [Contents](#contents)
   - [Installation](#installation)
   - [ModelNet](#modelnet)
@@ -66,8 +70,44 @@ point order); the other two use `hilbert` and `lex`, respectively. Each
 ordering retains its own hyperparameters from
 `ModelNet/training/configs/modelnet.json`.
 
-To run only one model, the original `--ordering hilbert|lex|ply` option
+To run only one paper baseline, the original `--ordering hilbert|lex|ply` option
 remains available.
+
+#### Optional DeepSets classification baseline
+
+DeepSets reuses **exactly the same residual MLP** as the paper's three
+classification baselines (widths `256 → 128 → 64`, same Fourier features,
+normalization, dropout, optimizer, and the unsorted-MLP/`ply` training
+hyperparameters). Only the first MLP input width changes from
+`num_points * d` to `d`, where `d = 3 * num_bands * 2` is the Fourier
+feature width for one 3D point. The entire MLP **including its final
+classification head** is applied to each point; the per-point class logits
+are then summed:
+
+```text
+output(S) = sum(MLP(x) for x in S)
+```
+
+There is **no averaging, max pooling, or network after the sum**. As with
+the unsorted MLP, the input cloud receives the existing per-cloud
+normalization before applying the pointwise Fourier map.
+
+Run only DeepSets, using the same five seeds:
+
+```bash
+python scripts/run_modelnet_classification.py --dataset 40 --ordering deepsets
+python scripts/run_modelnet_classification.py --dataset 10 --ordering deepsets
+```
+
+To include DeepSets alongside the three paper baselines in one run:
+
+```bash
+python scripts/run_modelnet_classification.py --dataset 40 --include_deepsets
+```
+
+The default `--ordering all` still runs the **original three paper
+baselines only**. DeepSets uses the same training/evaluation procedure
+and reports test accuracy and the train–test generalization gap.
 
 ### ModelNet rotation and canonization
 

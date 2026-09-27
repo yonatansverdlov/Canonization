@@ -31,7 +31,7 @@ except ImportError:
 from torchmetrics.classification import MulticlassAccuracy
 
 from utils.data import OrderedModelNet40
-from utils.models import GlobalMLPClassifier, PointTransformerClassifier
+from utils.models import DeepSetsMLPClassifier, GlobalMLPClassifier, PointTransformerClassifier
 from utils.util import IOStream
 
 
@@ -248,6 +248,14 @@ class LitModelNetClassifier(L.LightningModule):
                 fourier_scale=args.fourier_scale,
                 dropout=args.dropout,
                 ordering_type=args.ordering,
+            )
+        elif args.model == "deepsets":
+            self.model = DeepSetsMLPClassifier(
+                num_classes=self.num_classes,
+                num_points=args.num_points,
+                num_bands=args.num_bands,
+                fourier_scale=args.fourier_scale,
+                dropout=args.dropout,
             )
         elif args.model == "point_transformer":
             self.model = PointTransformerClassifier(
@@ -671,7 +679,7 @@ if __name__ == "__main__":
         "--model",
         type=str,
         default="global_mlp",
-        choices=["global_mlp", "point_transformer"],
+        choices=["global_mlp", "deepsets", "point_transformer"],
     )
 
     parser.add_argument("--dataset_stride", type=int, default=1)
