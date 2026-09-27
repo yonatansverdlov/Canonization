@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the paper baselines and optional pointwise DeepSets on ModelNet."""
+"""Run all four ModelNet classification models by default."""
 
 import argparse
 import csv
@@ -13,8 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAINING_DIR = REPO_ROOT / "ModelNet" / "training"
 RESULTS_ROOT = REPO_ROOT / "results" / "modelnet"
 
-# The three paper baselines use GlobalMLPClassifier. The optional DeepSets
-# applies the same MLP pointwise, sums its logits, and reuses the 'ply' config.
+# Hilbert, Lex-Sort and unsorted MLP use GlobalMLPClassifier; DeepSets
+# applies the same MLP per point, sums its logits and reuses the 'ply' config.
 MODELS = (
     ("Hilbert", "hilbert"),
     ("Lex-Sort", "lex"),
@@ -26,7 +26,7 @@ MODELS = (
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Run Hilbert, Lex-Sort and unsorted MLP "
+            "Run Hilbert, Lex-Sort, unsorted MLP and DeepSets "
             "on one dataset, five seeds per model."
         ),
     )
@@ -40,12 +40,7 @@ def parse_args(argv=None):
         "--ordering",
         choices=["all", "hilbert", "lex", "ply", "deepsets"],
         default="all",
-        help="Run the original three models (default), or just one, including DeepSets.",
-    )
-    parser.add_argument(
-        "--include_deepsets",
-        action="store_true",
-        help="Include DeepSets when --ordering all; keep the three paper baselines as default.",
+        help="Run all four models by default, or just one.",
     )
     parser.add_argument(
         "--seeds",
@@ -136,8 +131,7 @@ def main(argv=None):
     models = [
         (label, selection)
         for label, selection in MODELS
-        if args.ordering == selection
-        or (args.ordering == "all" and (selection != "deepsets" or args.include_deepsets))
+        if args.ordering in ("all", selection)
     ]
     rows = []
 

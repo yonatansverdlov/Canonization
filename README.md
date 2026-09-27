@@ -57,57 +57,18 @@ python scripts/setup_modelnet.py
 ```
 ### ModelNet classification
 
-Two commands run all three models (Hilbert, Lex-Sort, and MLP without sorting)
-on ModelNet40 and ModelNet10. Each model runs with seeds 0–4:
+Run all four models (Hilbert, Lex-Sort, unsorted MLP, and DeepSets)
+on ModelNet40 or ModelNet10. Each command runs seeds 0–4 for every
+model and prints a combined results table:
 
 ```bash
 python scripts/run_modelnet_classification.py --dataset 40
 python scripts/run_modelnet_classification.py --dataset 10
 ```
 
-The MLP baseline uses `--ordering ply` internally (the original, unsorted
-point order); the other two use `hilbert` and `lex`, respectively. Each
-ordering retains its own hyperparameters from
-`ModelNet/training/configs/modelnet.json`.
-
-To run only one paper baseline, the original `--ordering hilbert|lex|ply` option
-remains available.
-
-#### Optional DeepSets classification baseline
-
-DeepSets reuses **exactly the same residual MLP** as the paper's three
-classification baselines (widths `256 → 128 → 64`, same Fourier features,
-normalization, dropout, optimizer, and the unsorted-MLP/`ply` training
-hyperparameters). Only the first MLP input width changes from
-`num_points * d` to `d`, where `d = 3 * num_bands * 2` is the Fourier
-feature width for one 3D point. The entire MLP **including its final
-classification head** is applied to each point; the per-point class logits
-are then summed:
-
-```text
-output(S) = sum(MLP(x) for x in S)
-```
-
-There is **no averaging, max pooling, or network after the sum**. As with
-the unsorted MLP, the input cloud receives the existing per-cloud
-normalization before applying the pointwise Fourier map.
-
-Run only DeepSets, using the same five seeds:
-
-```bash
-python scripts/run_modelnet_classification.py --dataset 40 --ordering deepsets
-python scripts/run_modelnet_classification.py --dataset 10 --ordering deepsets
-```
-
-To include DeepSets alongside the three paper baselines in one run:
-
-```bash
-python scripts/run_modelnet_classification.py --dataset 40 --include_deepsets
-```
-
-The default `--ordering all` still runs the **original three paper
-baselines only**. DeepSets uses the same training/evaluation procedure
-and reports test accuracy and the train–test generalization gap.
+DeepSets applies the same MLP independently to each point with input
+dimension `d` instead of `num_points * d`, then sums the class logits.
+It uses the unsorted MLP's hyperparameters, with no layers after the sum.
 
 ### ModelNet rotation and canonization
 

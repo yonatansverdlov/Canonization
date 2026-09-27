@@ -13,7 +13,7 @@ spec.loader.exec_module(runner)
 
 
 @pytest.mark.parametrize("dataset", ["10", "40"])
-def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset, capsys):
+def test_one_command_runs_four_models(monkeypatch, tmp_path, dataset, capsys):
     monkeypatch.setattr(runner, "TRAINING_DIR", tmp_path / "training")
     monkeypatch.setattr(runner, "RESULTS_ROOT", tmp_path / "results")
     calls = []
@@ -21,13 +21,15 @@ def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset, capsys):
     def fake_subprocess_run(cmd, cwd, check):
         assert check is True
         assert cwd == runner.TRAINING_DIR
-        assert cmd[cmd.index("--model") + 1] == "global_mlp"
+        model = cmd[cmd.index("--model") + 1]
+        assert model in ("global_mlp", "deepsets")
         assert cmd[cmd.index("--run_5_seeds") + 1] == "true"
         ordering = cmd[cmd.index("--ordering") + 1]
         assert cmd[cmd.index("--dataset") + 1] == f"modelnet{dataset}"
         assert cmd[cmd.index("--seeds") + 1:cmd.index("--exp_name")] == ["0", "1", "2", "3", "4"]
         exp_name = cmd[cmd.index("--exp_name") + 1]
-        assert exp_name == f"modelnet{dataset}_{ordering}"
+        selection = "deepsets" if model == "deepsets" else ordering
+        assert exp_name == f"modelnet{dataset}_{selection}"
         output = cwd / "checkpoints" / exp_name / "summary.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps({
@@ -39,25 +41,25 @@ def test_one_command_runs_three_models(monkeypatch, tmp_path, dataset, capsys):
             "gen_gap_mean": 0.1,
             "gen_gap_std": 0.01,
         }))
-        calls.append(ordering)
+        calls.append(selection)
 
     monkeypatch.setattr(runner.subprocess, "run", fake_subprocess_run)
     runner.main(["--dataset", dataset])
-    assert calls == ["hilbert", "lex", "ply"]
+    assert calls == ["hilbert", "lex", "ply", "deepsets"]
     payload = json.loads((runner.RESULTS_ROOT / f"modelnet{dataset}_results.json").read_text())
-    assert [row["model"] for row in payload["rows"]] == ["Hilbert", "Lex-Sort", "MLP"]
+    assert [row["model"] for row in payload["rows"]] == ["Hilbert", "Lex-Sort", "MLP", "DeepSets"]
     csv_content = (runner.RESULTS_ROOT / f"modelnet{dataset}_results.csv").read_text()
-    assert len(csv_content.strip().splitlines()) == 4
+    assert len(csv_content.strip().splitlines()) == 5
     output = capsys.readouterr().out
     table = output[output.rfind("┌"):]
     assert f"MODELNET{dataset} RESULTS (5 SEEDS)" in table
     assert "Test accuracy (%)" in table
     assert "Generalization gap (pp)" in table
-    assert table.count("│") == 18  # title 2, header 4, three data rows 12
-    for label in ("Hilbert", "Lex-Sort", "MLP"):
+    assert table.count("│") == 22  # title 2, header 4, four data rows 16
+    for label in ("Hilbert", "Lex-Sort", "MLP", "DeepSets"):
         assert f"│ {label:<8} │" in table
-    assert table.count("80.00 ± 2.00") == 3
-    assert table.count("10.00 ± 1.00") == 3
+    assert table.count("80.00 ± 2.00") == 4
+    assert table.count("10.00 ± 1.00") == 4
     assert "JSON:" not in table and "CSV:" not in table
 
 

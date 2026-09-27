@@ -108,20 +108,21 @@ def test_runner_selects_deepsets_with_ply_hyperparameters(monkeypatch, tmp_path,
     ]
 
 
-def test_runner_keeps_original_three_as_default_and_opt_in_fourth(monkeypatch, tmp_path):
+def test_runner_runs_all_four_by_default(monkeypatch, tmp_path):
     runner = load_runner()
     monkeypatch.setattr(runner, "TRAINING_DIR", tmp_path / "training")
     monkeypatch.setattr(runner, "RESULTS_ROOT", tmp_path / "results")
     calls = []
 
     def fake_run(cmd, cwd, check):
+        assert check is True
         model = cmd[cmd.index("--model") + 1]
         ordering = cmd[cmd.index("--ordering") + 1]
         name = cmd[cmd.index("--exp_name") + 1]
         calls.append((model, ordering))
-        output = cwd / "checkpoints" / name / "summary.json"
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps({
+        path = cwd / "checkpoints" / name / "summary.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
             "dataset": "modelnet40", "model": model,
             "ordering": ordering, "seeds": [0],
             "test_acc_mean": 0.7, "test_acc_std": 0.0,
@@ -131,15 +132,8 @@ def test_runner_keeps_original_three_as_default_and_opt_in_fourth(monkeypatch, t
     monkeypatch.setattr(runner.subprocess, "run", fake_run)
     runner.main(["--dataset", "40", "--seeds", "0"])
     assert calls == [
-        ("global_mlp", "hilbert"), ("global_mlp", "lex"), ("global_mlp", "ply")
-    ]
-    calls.clear()
-    runner.main(["--dataset", "40", "--seeds", "0", "--include_deepsets"])
-    assert calls == [
         ("global_mlp", "hilbert"), ("global_mlp", "lex"),
         ("global_mlp", "ply"), ("deepsets", "ply"),
     ]
-    result = json.loads((runner.RESULTS_ROOT / "modelnet40_results.json").read_text())
-    assert [row["model"] for row in result["rows"]] == [
-        "Hilbert", "Lex-Sort", "MLP", "DeepSets",
-    ]
+    rows = json.loads((runner.RESULTS_ROOT / "modelnet40_results.json").read_text())["rows"]
+    assert [row["model"] for row in rows] == ["Hilbert", "Lex-Sort", "MLP", "DeepSets"]
