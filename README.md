@@ -71,7 +71,7 @@ dimension `d` instead of `num_points * d`, then sums the class logits.
 It has no layers after the sum. Its separate training preset (adapted from
 the [original Deep Sets ModelNet implementation](https://github.com/manzilzaheer/DeepSets/tree/master/PointClouds))
 uses Adam, learning rate 0.001, batch size 64, weight decay 1e-7,
-and 1,000 epochs; dropout and label smoothing are disabled to test fitting
+and 200 epochs (learning-rate drops at epochs 80 and 160); dropout and label smoothing are disabled to test fitting
 capacity. The other three models retain their original training settings.
 Note that the original published architecture differs from this strict
 sum-of-MLP-logits variant.
