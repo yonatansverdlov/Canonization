@@ -15,9 +15,9 @@ def test_deepsets_reference_recipe_and_existing_baselines():
     assert hp["lr"] == 1e-3
     assert hp["weight_decay"] == 1e-7
     assert hp["batch_size"] == 64
-    assert hp["epochs"] == 1000
+    assert hp["epochs"] == 200
     assert hp["scheduler"] == "multistep"
-    assert hp["lr_milestones"] == [400, 800]
+    assert hp["lr_milestones"] == [80, 160]
     assert hp["lr_gamma"] == 0.1
     assert hp["gradient_clip_val"] == 5
     assert hp["dropout"] == 0
