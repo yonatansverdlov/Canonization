@@ -20,6 +20,12 @@ env/
 data/
 results/
 
+# Local tooling, tests, workflows, and table generation
+/.github/workflows/
+/tests/
+/experiment_tables.py
+/experiment_tables/
+
 # Logs and checkpoints
 *.log
 *.ckpt
