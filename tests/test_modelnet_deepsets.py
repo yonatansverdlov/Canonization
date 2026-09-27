@@ -86,7 +86,7 @@ def test_runner_selects_deepsets_with_ply_hyperparameters(monkeypatch, tmp_path,
         assert cmd[cmd.index("--dataset") + 1] == f"modelnet{dataset}"
         assert cmd[cmd.index("--run_5_seeds") + 1] == "true"
         name = cmd[cmd.index("--exp_name") + 1]
-        assert name == f"modelnet{dataset}_deepsets"
+        assert name == f"modelnet{dataset}_deepsets_reference_hps"
         commands.append(cmd)
         output = cwd / "checkpoints" / name / "summary.json"
         output.parent.mkdir(parents=True, exist_ok=True)

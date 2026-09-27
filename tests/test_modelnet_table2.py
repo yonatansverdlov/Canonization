@@ -29,7 +29,11 @@ def test_one_command_runs_four_models(monkeypatch, tmp_path, dataset, capsys):
         assert cmd[cmd.index("--seeds") + 1:cmd.index("--exp_name")] == ["0", "1", "2", "3", "4"]
         exp_name = cmd[cmd.index("--exp_name") + 1]
         selection = "deepsets" if model == "deepsets" else ordering
-        assert exp_name == f"modelnet{dataset}_{selection}"
+        expected_name = (
+            f"modelnet{dataset}_deepsets_reference_hps"
+            if selection == "deepsets" else f"modelnet{dataset}_{selection}"
+        )
+        assert exp_name == expected_name
         output = cwd / "checkpoints" / exp_name / "summary.json"
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps({

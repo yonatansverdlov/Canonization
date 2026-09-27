@@ -401,6 +401,7 @@ class GlobalMLPClassifier(nn.Module):
                  fourier_scale=10.0,
                  dropout=0.5,
                  point_dropout=0.2,
+                 input_dropout=0.2,
                  mlp_dims=[256, 128, 64],  # Using the tighter bottleneck
                  ordering_type='lex',  # Can be 'pca', 'lex', 'hilbert', 'ply'
                  hilbert_m=12,
@@ -415,7 +416,7 @@ class GlobalMLPClassifier(nn.Module):
 
         # Fourier Mapping
         self.fourier_map = FourierFeatureMap(in_features=in_channels, num_bands=num_bands, scale=fourier_scale)
-        self.input_drop = nn.Dropout(0.2)  # Input dropout to fight overfitting
+        self.input_drop = nn.Dropout(input_dropout)  # Configurable; baseline default stays 0.2.
 
         # Use Dropout1d to drop entire points (it expects shape: B, Channels, Sequence)
         # Point-Level Dropout

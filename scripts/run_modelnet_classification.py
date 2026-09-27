@@ -138,7 +138,11 @@ def main(argv=None):
     for label, selection in models:
         training_model = "deepsets" if selection == "deepsets" else "global_mlp"
         ordering = "ply" if selection == "deepsets" else selection
-        exp_name = f"{dataset}_{selection}"
+        # Keep the earlier DeepSets checkpoints intact for comparison.
+        exp_name = (
+            f"{dataset}_deepsets_reference_hps"
+            if selection == "deepsets" else f"{dataset}_{selection}"
+        )
         cmd = [
             sys.executable, "train.py",
             "--dataset", dataset,

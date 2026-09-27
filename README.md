@@ -68,7 +68,13 @@ python scripts/run_modelnet_classification.py --dataset 10
 
 DeepSets applies the same MLP independently to each point with input
 dimension `d` instead of `num_points * d`, then sums the class logits.
-It uses the unsorted MLP's hyperparameters, with no layers after the sum.
+It has no layers after the sum. Its separate training preset (adapted from
+the [original Deep Sets ModelNet implementation](https://github.com/manzilzaheer/DeepSets/tree/master/PointClouds))
+uses Adam, learning rate 0.001, batch size 64, weight decay 1e-7,
+and 1,000 epochs; dropout and label smoothing are disabled to test fitting
+capacity. The other three models retain their original training settings.
+Note that the original published architecture differs from this strict
+sum-of-MLP-logits variant.
 
 ### ModelNet rotation and canonization
 

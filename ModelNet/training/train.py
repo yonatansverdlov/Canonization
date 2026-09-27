@@ -121,7 +121,10 @@ def apply_ordering_config(args, explicit_args):
         We intentionally do not use --preset.
         The ordering itself selects the config.
     """
-    if args.ordering not in ["ply", "lex", "hilbert"]:
+    # DeepSets uses its own source-inspired optimizer/training preset instead
+    # of silently inheriting the unsorted MLP's heavy regularization.
+    config_key = "deepsets" if args.model == "deepsets" else args.ordering
+    if config_key not in ["ply", "lex", "hilbert", "deepsets"]:
         return args
 
     if not os.path.exists(args.config):
@@ -130,13 +133,13 @@ def apply_ordering_config(args, explicit_args):
     with open(args.config, "r") as f:
         config = json.load(f)
 
-    if args.ordering not in config:
+    if config_key not in config:
         raise ValueError(
-            f"Ordering '{args.ordering}' not found in {args.config}. "
+            f"Model/ordering config '{config_key}' not found in {args.config}. "
             f"Available configs: {list(config.keys())}"
         )
 
-    ordering_values = config[args.ordering]
+    ordering_values = config[config_key]
 
     for key, value in ordering_values.items():
         if key in explicit_args:
@@ -247,6 +250,8 @@ class LitModelNetClassifier(L.LightningModule):
                 num_bands=args.num_bands,
                 fourier_scale=args.fourier_scale,
                 dropout=args.dropout,
+                point_dropout=args.point_dropout,
+                input_dropout=args.input_dropout,
                 ordering_type=args.ordering,
             )
         elif args.model == "deepsets":
@@ -256,6 +261,8 @@ class LitModelNetClassifier(L.LightningModule):
                 num_bands=args.num_bands,
                 fourier_scale=args.fourier_scale,
                 dropout=args.dropout,
+                point_dropout=args.point_dropout,
+                input_dropout=args.input_dropout,
             )
         elif args.model == "point_transformer":
             self.model = PointTransformerClassifier(
@@ -323,14 +330,22 @@ class LitModelNetClassifier(L.LightningModule):
                 self.parameters(),
                 lr=start_lr,
                 weight_decay=self.args.weight_decay,
+                eps=self.args.adam_eps,
             )
 
-        min_lr = start_lr * 0.001
-        scheduler = CosineAnnealingLR(
-            optimizer,
-            T_max=self.args.epochs,
-            eta_min=min_lr,
-        )
+        if self.args.scheduler == "multistep":
+            scheduler = optim.lr_scheduler.MultiStepLR(
+                optimizer,
+                milestones=self.args.lr_milestones,
+                gamma=self.args.lr_gamma,
+            )
+        else:
+            min_lr = start_lr * 0.001
+            scheduler = CosineAnnealingLR(
+                optimizer,
+                T_max=self.args.epochs,
+                eta_min=min_lr,
+            )
 
         return {
             "optimizer": optimizer,
@@ -510,6 +525,7 @@ def run_train(args, io):
         accelerator=accelerator,
         devices=devices,
         deterministic=True,
+        gradient_clip_val=args.gradient_clip_val,
         callbacks=[TrainLogCallback(io)],
         enable_checkpointing=False,
         logger=False,
@@ -713,6 +729,8 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=256)
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--num_points", type=int, default=1024)
+    parser.add_argument("--point_dropout", type=float, default=0.2)
+    parser.add_argument("--input_dropout", type=float, default=0.2)
 
     # These are loaded from presets.json according to --ordering,
     # unless explicitly overridden in the CLI.
@@ -721,6 +739,11 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--label_smoothing", type=float, default=0.2)
     parser.add_argument("--dropout", type=float, default=0.3)
+    parser.add_argument("--adam_eps", type=float, default=1e-8)
+    parser.add_argument("--scheduler", choices=["cosine", "multistep"], default="cosine")
+    parser.add_argument("--lr_milestones", nargs="+", type=int, default=[400, 800])
+    parser.add_argument("--lr_gamma", type=float, default=0.1)
+    parser.add_argument("--gradient_clip_val", type=float, default=0.0)
 
     parser.add_argument("--test_batch_size", type=int, default=16)
     parser.add_argument(
@@ -793,7 +816,10 @@ if __name__ == "__main__":
     io.cprint(f"Dataset folder: {cfg['dataset_name']}")
     io.cprint(f"Num classes: {cfg['num_classes']}")
 
-    if args.ordering in ["ply", "lex", "hilbert"]:
+    if args.model == "deepsets":
+        io.cprint("Loaded config by model: deepsets")
+        io.cprint(f"Config: {args.config}")
+    elif args.ordering in ["ply", "lex", "hilbert"]:
         io.cprint(f"Loaded config by ordering: {args.ordering}")
         io.cprint(f"Config: {args.config}")
 
