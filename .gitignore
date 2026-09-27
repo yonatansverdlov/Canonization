@@ -25,6 +25,7 @@ results/
 /tests/
 /experiment_tables.py
 /experiment_tables/
+/local_sweeps/
 
 # Logs and checkpoints
 *.log

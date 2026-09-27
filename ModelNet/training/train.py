@@ -19,7 +19,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 try:
     import lightning as L
@@ -180,27 +180,76 @@ class ModelNetDataModule(L.LightningDataModule):
         self.args = args
         cfg = get_dataset_config(args.dataset)
         self.dataset_name = cfg["dataset_name"]
+        self._split_cache = None
+
+    def _make_train_dataset(self, augment):
+        return OrderedModelNet40(
+            partition="train",
+            num_points=self.args.num_points,
+            ordering=self.args.ordering,
+            dataset_name=self.dataset_name,
+            dataset_stride=self.args.dataset_stride,
+            use_fps=self.args.use_fps,
+            apply_jitter=self.args.apply_jitter if augment else False,
+            apply_anisotropic_scale=self.args.apply_scale if augment else False,
+            apply_random_permutation=self.args.apply_random_permutation if augment else False,
+            apply_rotation=self.args.apply_rotation if augment else False,
+        )
+
+    def _split_indices(self, dataset):
+        if self.args.val_fraction <= 0:
+            return None, None
+        if not 0 < self.args.val_fraction < 1:
+            raise ValueError("--val_fraction must be in (0, 1).")
+        if self._split_cache is not None:
+            return self._split_cache
+
+        labels = np.asarray(dataset.label).reshape(-1)
+        rng = np.random.RandomState(self.args.val_split_seed)
+        train_idx, val_idx = [], []
+        for cls in np.unique(labels):
+            cls_idx = np.flatnonzero(labels == cls).copy()
+            rng.shuffle(cls_idx)
+            n_val = max(1, int(round(len(cls_idx) * self.args.val_fraction)))
+            if n_val >= len(cls_idx):
+                raise ValueError("Validation split leaves no training samples in a class.")
+            val_idx.extend(cls_idx[:n_val].tolist())
+            train_idx.extend(cls_idx[n_val:].tolist())
+
+        self._split_cache = (train_idx, val_idx)
+        return self._split_cache
 
     def train_dataloader(self):
-        generator = torch.Generator()
-        generator.manual_seed(self.args.seed)
+        generator = torch.Generator().manual_seed(self.args.seed)
+        dataset = self._make_train_dataset(augment=True)
+        train_idx, _ = self._split_indices(dataset)
+        if train_idx is not None:
+            dataset = Subset(dataset, train_idx)
 
         return DataLoader(
-            OrderedModelNet40(
-                partition="train",
-                num_points=self.args.num_points,
-                ordering=self.args.ordering,
-                dataset_name=self.dataset_name,
-                dataset_stride=self.args.dataset_stride,
-                use_fps=self.args.use_fps,
-                apply_jitter=self.args.apply_jitter,
-                apply_anisotropic_scale=self.args.apply_scale,
-                apply_random_permutation=self.args.apply_random_permutation,
-                apply_rotation=self.args.apply_rotation,
-            ),
+            dataset,
             batch_size=self.args.batch_size,
             shuffle=True,
             drop_last=True,
+            num_workers=self.args.num_workers,
+            pin_memory=self.args.pin_memory,
+            persistent_workers=self.args.num_workers > 0,
+            worker_init_fn=worker_init_fn if self.args.num_workers > 0 else None,
+            generator=generator,
+        )
+
+    def val_dataloader(self):
+        if self.args.val_fraction <= 0:
+            return None
+        generator = torch.Generator().manual_seed(self.args.val_split_seed + 100000)
+        dataset = self._make_train_dataset(augment=False)
+        _, val_idx = self._split_indices(dataset)
+        dataset = Subset(dataset, val_idx)
+        return DataLoader(
+            dataset,
+            batch_size=self.args.test_batch_size,
+            shuffle=False,
+            drop_last=False,
             num_workers=self.args.num_workers,
             pin_memory=self.args.pin_memory,
             persistent_workers=self.args.num_workers > 0,
@@ -302,6 +351,8 @@ class LitModelNetClassifier(L.LightningModule):
             num_classes=self.num_classes,
             average="macro",
         )
+        self.best_val_acc = float("-inf")
+        self.best_val_epoch = -1
 
     def forward(self, x):
         return self.model(x)
@@ -440,6 +491,11 @@ class LitModelNetClassifier(L.LightningModule):
         self.log("val_acc", val_acc, prog_bar=True, sync_dist=True)
         self.log("val_avg_acc", val_avg_acc, prog_bar=False, sync_dist=True)
 
+        val_acc_value = float(val_acc.detach().cpu())
+        if val_acc_value > self.best_val_acc:
+            self.best_val_acc = val_acc_value
+            self.best_val_epoch = int(self.current_epoch)
+
         self.val_acc.reset()
         self.val_avg_acc.reset()
 
@@ -531,11 +587,11 @@ def run_train(args, io):
         logger=False,
         enable_progress_bar=True,
         num_sanity_val_steps=0,
-        limit_val_batches=0,
+        limit_val_batches=1.0 if args.val_fraction > 0 else 0,
     )
 
-    # Train on the full training split. The test split is not touched
-    # during optimization and is evaluated exactly once after training.
+    # For sweeps, validation is a fixed stratified subset of the training
+    # partition. The official test split remains untouched when --skip_test.
     trainer.fit(lit_model, datamodule=datamodule)
 
     metrics = trainer.callback_metrics
@@ -553,17 +609,30 @@ def run_train(args, io):
     )
     torch.save(lit_model.model.state_dict(), final_model_path)
 
-    test_results = trainer.test(
-        lit_model,
-        datamodule=datamodule,
-        verbose=False,
+    best_val_acc = (
+        lit_model.best_val_acc if args.val_fraction > 0 else float("nan")
     )
-    test_acc = float(test_results[0]["test_acc"])
-    gen_gap = train_acc - test_acc
+    best_val_epoch = (
+        lit_model.best_val_epoch if args.val_fraction > 0 else -1
+    )
+
+    if args.skip_test:
+        test_acc = float("nan")
+        gen_gap = float("nan")
+    else:
+        test_results = trainer.test(
+            lit_model,
+            datamodule=datamodule,
+            verbose=False,
+        )
+        test_acc = float(test_results[0]["test_acc"])
+        gen_gap = train_acc - test_acc
 
     return {
         "seed": args.seed,
         "train_acc": train_acc,
+        "best_val_acc": best_val_acc,
+        "best_val_epoch": best_val_epoch,
         "test_acc": test_acc,
         "gen_gap": gen_gap,
     }
@@ -588,6 +657,10 @@ def run_train_multiple_seeds(args, io):
         result = run_train(run_args, seed_io)
         all_results.append(result)
 
+    val_accs = np.array(
+        [r["best_val_acc"] for r in all_results],
+        dtype=np.float64,
+    )
     test_accs = np.array(
         [r["test_acc"] for r in all_results],
         dtype=np.float64,
@@ -599,10 +672,12 @@ def run_train_multiple_seeds(args, io):
 
     ddof = 1 if len(all_results) > 1 else 0
 
-    test_mean = float(np.mean(test_accs))
-    test_std = float(np.std(test_accs, ddof=ddof))
-    gap_mean = float(np.mean(gen_gaps))
-    gap_std = float(np.std(gen_gaps, ddof=ddof))
+    val_mean = float(np.nanmean(val_accs)) if np.isfinite(val_accs).any() else float("nan")
+    val_std = float(np.nanstd(val_accs, ddof=ddof)) if np.isfinite(val_accs).any() else float("nan")
+    test_mean = float(np.nanmean(test_accs)) if np.isfinite(test_accs).any() else float("nan")
+    test_std = float(np.nanstd(test_accs, ddof=ddof)) if np.isfinite(test_accs).any() else float("nan")
+    gap_mean = float(np.nanmean(gen_gaps)) if np.isfinite(gen_gaps).any() else float("nan")
+    gap_std = float(np.nanstd(gen_gaps, ddof=ddof)) if np.isfinite(gen_gaps).any() else float("nan")
 
     io.cprint("")
     io.cprint("========== FINAL SUMMARY ==========")
@@ -616,14 +691,20 @@ def run_train_multiple_seeds(args, io):
     )
     io.cprint(f"Model: {model_label}")
     io.cprint(f"Ordering: {args.ordering}")
-    io.cprint(
-        "Test accuracy: %.6f ± %.6f"
-        % (test_mean, test_std)
-    )
-    io.cprint(
-        "Generalization gap (train - test): %.6f ± %.6f"
-        % (gap_mean, gap_std)
-    )
+    if np.isfinite(val_mean):
+        io.cprint(
+            "Best validation accuracy: %.6f ± %.6f"
+            % (val_mean, val_std)
+        )
+    if np.isfinite(test_mean):
+        io.cprint(
+            "Test accuracy: %.6f ± %.6f"
+            % (test_mean, test_std)
+        )
+        io.cprint(
+            "Generalization gap (train - test): %.6f ± %.6f"
+            % (gap_mean, gap_std)
+        )
     io.cprint("===================================")
 
     # Machine-readable per-seed results and mean/std for the experiment runner.
@@ -632,6 +713,8 @@ def run_train_multiple_seeds(args, io):
         "model": args.model,
         "ordering": args.ordering,
         "seeds": [int(result["seed"]) for result in all_results],
+        "val_acc_mean": val_mean,
+        "val_acc_std": val_std,
         "test_acc_mean": test_mean,
         "test_acc_std": test_std,
         "gen_gap_mean": gap_mean,
@@ -718,6 +801,9 @@ if __name__ == "__main__":
         default=False,
     )
     parser.add_argument("--apply_rotation", type=str2bool, nargs="?", const=True, default=False)
+    parser.add_argument("--val_fraction", type=float, default=0.0)
+    parser.add_argument("--val_split_seed", type=int, default=2026)
+    parser.add_argument("--skip_test", type=str2bool, nargs="?", const=True, default=False)
 
     parser.add_argument("--trans_dim", type=int, default=216)
     parser.add_argument("--trans_depth", type=int, default=4)
