@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the DeepSets extension of Table 9 (ModelNet40 data scarcity)."""
+"""Run the single-seed DeepSets extension of Table 9 (ModelNet40 data scarcity)."""
 
 import csv
 import json
@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAINING_DIR = REPO_ROOT / "ModelNet" / "training"
 RESULTS_DIR = REPO_ROOT / "results" / "modelnet"
 
-SEEDS = [0, 1, 2, 3, 4]
+SEEDS = [0]
 SETTINGS = (
     (1, 9840),
     (2, 4920),
