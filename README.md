@@ -77,6 +77,18 @@ The other three models retain their original training settings.
 Note that the original published architecture differs from this strict
 sum-of-MLP-logits variant.
 
+To extend the ModelNet40 data-scarcity experiment (Table 9) with DeepSets
+using the fixed selected recipe, run:
+
+```bash
+python scripts/run_modelnet_table9_deepsets.py
+```
+
+This runs training strides 1, 2, 4, and 8 (9840, 4920, 2460, and 1230
+training samples), with five seeds per setting. For this data-scarcity
+extension DeepSets is trained for 150 epochs with learning-rate drops at
+epochs 60 and 120.
+
 ### ModelNet rotation and canonization
 
 Run PurePCA, FrameAveraging, Skewness, and RandomFrame on ModelNet40
