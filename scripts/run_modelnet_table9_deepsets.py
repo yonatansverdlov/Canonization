@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Run the single-seed DeepSets extension of Table 9 (ModelNet40 data scarcity)."""
 
+import argparse
 import csv
 import json
 import subprocess
@@ -12,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 TRAINING_DIR = REPO_ROOT / "ModelNet" / "training"
 RESULTS_DIR = REPO_ROOT / "results" / "modelnet"
 
-SEEDS = [0]
+DEFAULT_SEEDS = [0]
 SETTINGS = (
     (1, 9840),
     (2, 4920),
@@ -21,7 +22,13 @@ SETTINGS = (
 )
 
 
-def run_setting(stride, n_train):
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--seeds", nargs="+", type=int, default=DEFAULT_SEEDS)
+    return parser.parse_args()
+
+
+def run_setting(stride, n_train, seeds):
     exp_name = f"modelnet40_table9_deepsets_n{n_train}"
     cmd = [
         sys.executable,
@@ -31,7 +38,7 @@ def run_setting(stride, n_train):
         "--model", "deepsets",
         "--dataset_stride", str(stride),
         "--run_5_seeds", "true",
-        "--seeds", *(str(seed) for seed in SEEDS),
+        "--seeds", *(str(seed) for seed in seeds),
         "--exp_name", exp_name,
 
         # Fixed DeepSets recipe chosen on ModelNet10 validation.
@@ -64,13 +71,13 @@ def run_setting(stride, n_train):
     with summary_path.open() as f:
         summary = json.load(f)
 
-    if summary.get("seeds") != SEEDS:
+    if summary.get("seeds") != seeds:
         raise RuntimeError(f"Unexpected seeds in {summary_path}")
 
     return {
         "training_samples": n_train,
         "dataset_stride": stride,
-        "n_seeds": len(SEEDS),
+        "n_seeds": len(seeds),
         "test_acc_mean": summary["test_acc_mean"],
         "test_acc_std": summary["test_acc_std"],
         "gen_gap_mean": summary["gen_gap_mean"],
@@ -111,7 +118,8 @@ def print_table(rows):
 
 
 def main():
-    rows = [run_setting(stride, n_train) for stride, n_train in SETTINGS]
+    args = parse_args()
+    rows = [run_setting(stride, n_train, args.seeds) for stride, n_train in SETTINGS]
 
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     json_path = RESULTS_DIR / "table9_deepsets.json"
@@ -123,7 +131,7 @@ def main():
                 "dataset": "modelnet40",
                 "model": "deepsets",
                 "epochs": 150,
-                "seeds": SEEDS,
+                "seeds": args.seeds,
                 "rows": rows,
             },
             f,
